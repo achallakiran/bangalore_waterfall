@@ -23,7 +23,19 @@ const C = (ax, a, bb, r, t0, t1, col, jit) => {
   else b = [t0, a - r, bb - r, t1, a + r, bb + r];
   return { k: 'c', ax, a, bb, r, t0, t1, b, col, jit };
 };
+// Oriented box (turned about the vertical axis by yaw degrees). Yaw 0 is the plain axis-aligned box, so nothing already drawn changes.
+const OB = (cx, cz, hx, hz, yawDeg, y0, y1, col, jit, paint) => {
+  if (!yawDeg) return paint ? PT(cx - hx, y0, cz - hz, cx + hx, y1, cz + hz, col) : B(cx - hx, y0, cz - hz, cx + hx, y1, cz + hz, col, jit);
+  const a = yawDeg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  const ex = Math.abs(c) * hx + Math.abs(s) * hz, ez = Math.abs(s) * hx + Math.abs(c) * hz;
+  return { k: 'o', cx, cz, hx, hz, c, s, y0, y1, b: [cx - ex, y0, cz - ez, cx + ex, y1, cz + ez], col, jit: paint ? 0.02 : jit, paint: !!paint };
+};
 function inside(p, x, y, z) {
+  if (p.k === 'o') {
+    if (y < p.y0 || y >= p.y1) return false;
+    const dx = x - p.cx, dz = z - p.cz, lx = dx * p.c - dz * p.s, lz = dx * p.s + dz * p.c;
+    return lx >= -p.hx && lx < p.hx && lz >= -p.hz && lz < p.hz;
+  }
   if (p.k === 'b') { const b = p.b; return x >= b[0] && x < b[3] && y >= b[1] && y < b[4] && z >= b[2] && z < b[5]; }
   if (p.k === 's') { const dx = x - p.c[0], dy = y - p.c[1], dz = z - p.c[2]; return dx * dx + dy * dy + dz * dz <= p.r * p.r; }
   let r1, r2, t;
@@ -96,6 +108,7 @@ const { L, R, HW, PAV, LTOT, SLAB, K } = World;
 const SOLIDS = [];
 const box = (x0, z0, x1, z1) => SOLIDS.push({ t: 'b', x0, z0, x1, z1 });
 const circ = (x, z, r) => SOLIDS.push({ t: 'c', x, z, r });
+const obox = (x, z, hx, hz, yawDeg) => { if (!yawDeg) return box(x - hx, z - hz, x + hx, z + hz); const a = yawDeg * Math.PI / 180; SOLIDS.push({ t: 'o', x, z, hx, hz, c: Math.cos(a), s: Math.sin(a) }); };
 const gh = (x, z) => World.heightAt(x, z);
 
 // Map files give colours as "#RRGGBB" (or a number) and heights either as numbers or as { pad, add } (a pad's height plus an offset).
@@ -140,6 +153,26 @@ function bldgN(P, it) {
   P.push(PT(x0 + 1.0, y0, zf - 0.05, x0 + 2.0, y0 + 1.8, zf + 0.45, 0x6B4A33));
   box(x0, zf, x1, zf + depth);
 }
+// A building standing on a pad that may be turned to face the road: centre, width, depth, height and yaw (degrees).
+// Local frame: x along the front face, z away from it (front face at -depth/2). Yaw 0 draws exactly what bldgN draws.
+function bldgY(P, it) {
+  const y0 = World.pad(it.pad).h, cx = it.cx, cz = it.cz, w = it.w, depth = it.depth, h = it.h, yaw = it.yaw || 0, cols = it.cols.map(col);
+  const a = yaw * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  const hw = w / 2, zf = -depth / 2;
+  const W = (lx, lz) => [cx + lx * c + lz * s, cz - lx * s + lz * c];
+  const mk = (lx0, lz0, lx1, lz1, ya, yb, colr, jit, paint) => {
+    if (!yaw) return OB(cx + (lx0 + lx1) / 2, cz + (lz0 + lz1) / 2, (lx1 - lx0) / 2, (lz1 - lz0) / 2, 0, ya, yb, colr, jit, paint);
+    const q = W((lx0 + lx1) / 2, (lz0 + lz1) / 2);
+    return OB(q[0], q[1], (lx1 - lx0) / 2, (lz1 - lz0) / 2, yaw, ya, yb, colr, jit, paint);
+  };
+  P.push(mk(-hw, zf, hw, zf + depth, y0 - 0.4, y0 + h, col(it.wall), 0.05));
+  P.push(mk(-hw - 0.1, zf - 0.1, hw + 0.1, zf + depth + 0.1, y0 + h, y0 + h + 0.4, col(it.trim), 0.05));
+  for (let x = -hw + 0.5, ix = 0; x + it.ww <= hw - 0.3; x += it.pitch, ix++) {
+    it.ys.forEach((yy, iy) => P.push(mk(x, zf - 0.05, x + it.ww, zf + 0.45, y0 + yy, y0 + yy + 0.9, cols[(ix * 3 + iy * 5) % cols.length], 0, true)));
+  }
+  P.push(mk(-hw + 1.0, zf - 0.05, -hw + 2.0, zf + 0.45, y0, y0 + 1.8, 0x6B4A33, 0, true));
+  obox(cx, cz, hw, depth / 2, yaw);
+}
 function cone(P, x, z, y0) {
   P.push(B(x - 0.25, y0, z - 0.25, x + 0.25, y0 + 0.08, z + 0.25, 0x23252B, 0));
   P.push(C('y', x, z, 0.2, y0 + 0.08, y0 + 0.3, 0xF28C28, 0.02));
@@ -160,13 +193,16 @@ function buildObjects() {
           else if (k === 'PT') P.push(PT(nv(q[1]), nv(q[2]), nv(q[3]), nv(q[4]), nv(q[5]), nv(q[6]), col(q[7])));
           else if (k === 'C') P.push(C(q[1], q[2], q[3], q[4], nv(q[5]), nv(q[6]), col(q[7]), q[8]));
           else if (k === 'S') P.push(S(q[1], nv(q[2]), q[3], q[4], col(q[5]), q[6]));
+          else if (k === 'OB') P.push(OB(q[1], q[2], q[3], q[4], q[5], nv(q[6]), nv(q[7]), col(q[8]), q[9]));
+          else if (k === 'OPT') P.push(OB(q[1], q[2], q[3], q[4], q[5], nv(q[6]), nv(q[7]), col(q[8]), 0, true));
         });
-        it.solids.forEach(q => { if (q[0] === 'b') box(q[1], q[2], q[3], q[4]); else circ(q[1], q[2], q[3]); });
+        it.solids.forEach(q => { if (q[0] === 'b') box(q[1], q[2], q[3], q[4]); else if (q[0] === 'o') obox(q[1], q[2], q[3], q[4], q[5]); else circ(q[1], q[2], q[3]); });
         break;
       case 'windows': windowsRow(P, it.xa, it.xb, it.zf, it.ys, it.wh, it.ww, it.pitch, it.cols.map(col)); break;
       case 'tree': tree(P, it.x, it.z, it.h, it.r); break;
       case 'lamp': lamp(P, it.x, it.z, it.e, nv(it.y0)); break;
       case 'bldgN': bldgN(P, it); break;
+      case 'bldgY': bldgY(P, it); break;
       case 'guardposts': {
         // Guard posts where the road runs along a drop of more than a metre (hill-road look).
         it.edges.forEach(ei => {
@@ -354,6 +390,7 @@ function makeMesh(data, shadowCast) {
     c.setRGB(data.col[i * 3], data.col[i * 3 + 1], data.col[i * 3 + 2]);
     m.setColorAt(i, c);
   }
+  if (!data.count) m.setColorAt(0, c);   // an empty mesh (a map with no scenery) still needs its colour buffer, or the renderer fails
   m.count = data.count;
   m.instanceMatrix.needsUpdate = true;
   if (m.instanceColor) m.instanceColor.needsUpdate = true;
@@ -597,6 +634,19 @@ function pushOut(px, pz, r) {
   let ox = 0, oz = 0;
   for (let i = 0; i < SOLIDS.length; i++) {
     const s = SOLIDS[i];
+    if (s.t === 'o') {
+      const dx0 = px - s.x, dz0 = pz - s.z, lx = dx0 * s.c - dz0 * s.s, lz = dx0 * s.s + dz0 * s.c;
+      let dlx = lx - clamp(lx, -s.hx, s.hx), dlz = lz - clamp(lz, -s.hz, s.hz);
+      const d2 = dlx * dlx + dlz * dlz;
+      if (d2 >= r * r) continue;
+      let ax, az;
+      if (d2 < 1e-8) {   // inside the footprint: out through the nearest face
+        const ex = s.hx - Math.abs(lx), ez = s.hz - Math.abs(lz);
+        if (ex < ez) { ax = (lx < 0 ? -1 : 1) * (ex + r); az = 0; } else { ax = 0; az = (lz < 0 ? -1 : 1) * (ez + r); }
+      } else { const d = Math.sqrt(d2), k = (r - d) / d; ax = dlx * k; az = dlz * k; }
+      ox += ax * s.c + az * s.s; oz += -ax * s.s + az * s.c;
+      continue;
+    }
     let nx, nz;
     if (s.t === 'b') { nx = clamp(px, s.x0, s.x1); nz = clamp(pz, s.z0, s.z1); } else { nx = s.x; nz = s.z; }
     let dx = px - nx, dz = pz - nz;
@@ -1148,7 +1198,7 @@ function dispose() {
   } catch (e) {}
   if (window.__loop === dbg) delete window.__loop;
 }
-const dbg = { get memory() { return api.memory; }, P, lap, state, SOLIDS, World, start, setCam, keys, A, gY, NPC, VEH, get HF() { return HF; }, potholeHit, setKind, step, inp, resetRun, lapUpdate };
+const dbg = { get memory() { return api.memory; }, buildObjects, pushOut, inside, P, lap, state, SOLIDS, World, start, setCam, keys, A, gY, NPC, VEH, get HF() { return HF; }, potholeHit, setKind, step, inp, resetRun, lapUpdate };
 window.__loop = dbg;
 return { api, dispose, debug: dbg };
 

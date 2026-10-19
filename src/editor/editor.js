@@ -5,22 +5,10 @@ import { createWorld } from '../engine/world.js';
 import { validateMap, describeErrors } from '../maps/format.js';
 import { parseMap, MapError } from '../maps/manager.js';
 import * as ED from './model.js';
+import { createView3D } from './view3d.js';
+import { sampleCurve } from '../engine/curve.js';
+import { SECTIONS, BASIC, BUILDINGS, TREES, renderPieces, artUrl } from './tray.js';
 
-const TOOLS = [
-  ['select', 'Select', 'Click a thing to see it and change it.'],
-  ['pan', 'Pan', 'Drag to move the view. Mouse: right-drag or hold Space. Wheel or pinch to zoom.'],
-  ['road', 'Road', 'Drag from one point to another. Ends snap to roads that are close, and a junction is made where roads cross.'],
-  ['slope', 'Slope', 'Click a road to set its height there. Alt-click a height point to remove it.'],
-  ['terrain', 'Terrain', 'Click to paint a hill, rock, scrub or lake area.'],
-  ['building', 'Building', 'Drag a rectangle. Tick Shop to give it an awning and a name.'],
-  ['tree', 'Tree', 'Click to plant a tree.'],
-  ['lamp', 'Lamp', 'Click to place a street lamp.'],
-  ['signal', 'Signal', 'Click to place a traffic light or a traffic police post (used in a later version).'],
-  ['crossing', 'Crossing', 'Click on a road to place a pedestrian crossing (used in a later version).'],
-  ['spawn', 'Spawn area', 'Drag a rectangle where people, animals or vehicles appear (used in a later version).'],
-  ['start', 'Start', 'Click on a road to move the start of the lap.'],
-  ['erase', 'Erase', 'Click a thing to remove it. On empty ground it removes a terrain area.']
-];
 const BLOB_NAMES = { hills: 'Hill', rock: 'Rock', scrub: 'Scrub', lake: 'Lake' };
 const SPAWN_NAMES = { pedestrian: 'People', cow: 'Cows', buffalo: 'Buffalo', goat: 'Goats', dog: 'Dogs', vehicle: 'Vehicles' };
 const DRAFT_KEY = 'hl2.editor.draft.v1';
@@ -39,14 +27,15 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   const st = state || { map: ED.newMapFrom(base, { id: 'my-map', name: 'My map' }), undo: [], redo: [], view: null, dirty: false };
   ED.ensureFeatures(st.map);
   const toast = (m) => onToast && onToast(m);
+  let mode = '3d', v3 = null, ovT = 0, hoverRaf = 0, lastPtr = null;
   let tool = 'select', selected = null, W = null, ground = null, dirtyGround = true, groundT = 0, raf = 0, saveT = 0, disposed = false;
   let drag = null, hover = null, spaceDown = false, errors = [], warns = [], lines = null;
-  const opts = { h0: '', h1: '', slopeH: 2, blob: 'hills', blobSize: 8, bh: 6, shop: false, shopName: 'Corner Store', lampE: 1, sig: 'light', cross: 6, spawn: 'pedestrian', spawnN: 3 };
+  const opts = { h0: '', h1: '', slopeH: 2, blob: 'hills', blobSize: 8, bh: 6, shopName: 'Corner Store', lampE: 1, sig: 'light', cross: 6, spawn: 'pedestrian', spawnN: 3, curve: false, style: 'house', tree: 'small', brush: 'raise', paint: 'grass', brushD: 8, brushS: 0.4, faceRoad: true, yaw: 0 };
 
   // ---------- layout ----------
   const cv = el('canvas', { class: 'ed-canvas', tabindex: '0', 'aria-label': 'Map canvas' });
   const status = el('div', { class: 'ed-status', role: 'status' });
-  const toolBar = el('div', { class: 'ed-tools', role: 'toolbar', 'aria-label': 'Tools' });
+  const toolBar = el('div', { class: 'ed-tray' });
   const optBox = el('div', { class: 'ed-opts' });
   const selBox = el('div', { class: 'ed-sel' });
   const mapBox = el('div', { class: 'ed-map' });
@@ -60,29 +49,48 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   const file = el('input', { type: 'file', accept: '.json,application/json', hidden: true });
   const top = el('div', { class: 'ed-top' }, bExit, el('div', { class: 'ed-topbtns' }, bNew, bHill, bOpen, bSave, bUndo, bRedo), el('div', { class: 'ed-topbtns' }, bPlayCar, bPlayBike));
   const side = el('div', { class: 'ed-side' }, toolBar, hint, optBox, selBox, mapBox, errBox);
-  const stage = el('div', { class: 'ed-stage' }, cv, status);
+  const nav = el('div', { class: 'ed-nav', role: 'toolbar', 'aria-label': 'View' });
+  const navBtn = (label, title, fn) => { const b = el('button', { class: 'ed-navbtn', type: 'button', title, 'aria-label': title, text: label }); b.addEventListener('click', fn); nav.append(b); return b; };
+  const compass = el('button', { class: 'ed-compass', type: 'button', title: 'North up', 'aria-label': 'Compass: click to face north' }, el('span', { text: 'N' }));
+  const stage = el('div', { class: 'ed-stage' }, cv, nav, status);
   root.replaceChildren(top, el('div', { class: 'ed-body' }, stage, side), file);
 
-  TOOLS.forEach(([id, label, tip]) => {
-    const b = el('button', { class: 'ed-tool', type: 'button', 'data-tool': id, 'aria-pressed': 'false', title: tip, text: label });
-    b.addEventListener('click', () => setTool(id));
-    toolBar.append(b);
-  });
+  // ---------- the picture tray ----------
+  const pieces = {};                                   // real-piece pictures, filled in a moment after the editor opens
+  const tabBar = el('div', { class: 'ed-tabs', role: 'tablist', 'aria-label': 'Sections' }), tileGrid = el('div', { class: 'ed-tiles' }), basicRow = el('div', { class: 'ed-basic' });
+  let section = SECTIONS[0].id;
+  const tileBtn = (t) => {
+    const img = el('img', { class: 'ed-pic', alt: '', width: 56, height: 56, draggable: 'false' });
+    img.src = artUrl(t.art, pieces, 96); img.dataset.art = t.art;
+    const b = el('button', { class: 'ed-tool', type: 'button', 'data-tool': t.tool, 'data-tile': t.id, 'aria-pressed': 'false', title: t.tip, 'aria-label': t.label }, img, el('span', { text: t.label }));
+    b.addEventListener('click', () => setTool(t.tool, t));
+    return b;
+  };
+  function renderTray() {
+    basicRow.replaceChildren(...BASIC.map(tileBtn));
+    tabBar.replaceChildren(...SECTIONS.map(sx => { const b = el('button', { class: 'ed-tab', type: 'button', role: 'tab', 'aria-selected': String(sx.id === section), text: sx.label }); b.addEventListener('click', () => { section = sx.id; renderTray(); }); return b; }));
+    tileGrid.replaceChildren(...SECTIONS.find(sx => sx.id === section).tiles.map(tileBtn));
+    root.querySelectorAll('.ed-tool').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tile === (tile && tile.id))));
+  }
+  toolBar.append(basicRow, tabBar, tileGrid);
 
   // ---------- state and history ----------
   const snap = () => JSON.stringify(st.map);
-  function commit(fn, groundChanged = true) {
+  function commit(fn, groundChanged = true, box = null) {
     const before = snap();
     const res = fn(st.map);
     if (typeof res === 'string' && res.startsWith('!')) { st.map = JSON.parse(before); toast(res.slice(1)); return false; }
     st.undo.push(before); if (st.undo.length > 80) st.undo.shift();
     st.redo.length = 0; st.dirty = true;
-    after(groundChanged);
+    after(groundChanged, box);
     return res === undefined ? true : res;
   }
-  function after(groundChanged) {
+  function after(groundChanged, box) {
     if (groundChanged) { dirtyGround = true; lines = null; }
-    check(); refreshUi(); draw();
+    lines = null;
+    check(); refreshUi();
+    if (v3 && !errors.length) v3.invalidate(groundChanged ? (box || null) : false, true, st.map);
+    draw();
     clearTimeout(saveT); saveT = setTimeout(autosave, 800);
   }
   function undo() { if (!st.undo.length) return; st.redo.push(snap()); st.map = JSON.parse(st.undo.pop()); selected = null; st.dirty = true; after(true); }
@@ -131,6 +139,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   function resize() {
     const r = stage.getBoundingClientRect(); dpr = Math.min(2, window.devicePixelRatio || 1);
     cw = Math.max(200, r.width); ch = Math.max(200, r.height);
+    if (v3) v3.resize();
     cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr); cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
     if (!view.s) fit();
     draw();
@@ -140,6 +149,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   // ---------- drawing ----------
   function draw() {
     if (disposed) return;
+    if (mode === '3d') { clearTimeout(ovT); ovT = setTimeout(() => { if (!disposed) drawStatic3d(); }, 0); return; }
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(paint);
   }
@@ -234,39 +244,47 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   }
 
   // ---------- tools ----------
-  function setTool(id) {
-    tool = id; drag = null;
-    toolBar.querySelectorAll('.ed-tool').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tool === id)));
-    hint.textContent = (TOOLS.find(t => t[0] === id) || [])[2] || '';
+  let tile = BASIC[0];
+  const findTile = id => BASIC.concat(...SECTIONS.map(s => s.tiles)).find(t => t.id === id);
+  function setTool(id, t) {
+    const tt = t || (tile && tile.tool === id ? tile : BASIC.concat(...SECTIONS.map(s => s.tiles)).find(x => x.tool === id));
+    tool = id; tile = tt || BASIC[0]; drag = null; curvePts = [];
+    Object.assign(opts, tile.set || {});
+    root.querySelectorAll('.ed-tool').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tile === tile.id)));
+    hint.textContent = tile.tip || '';
     buildOpts(); draw();
-    cv.style.cursor = id === 'pan' ? 'grab' : id === 'select' ? 'default' : 'crosshair';
+    activeCanvas().style.cursor = id === 'pan' ? 'grab' : id === 'select' ? 'default' : 'crosshair';
   }
   function num(label, key, min, max, step = 1) {
     const i = el('input', { type: 'number', min, max, step, value: opts[key], inputmode: 'decimal' });
     i.addEventListener('input', () => { opts[key] = i.value === '' ? '' : Number(i.value); });
     return el('label', { class: 'ed-f' }, el('span', { text: label }), i);
   }
-  function sel(label, key, choices) {
-    const s = el('select', {}, ...choices.map(([v, t]) => el('option', { value: v, text: t })));
-    s.value = opts[key];
-    s.addEventListener('change', () => { opts[key] = s.value; });
-    return el('label', { class: 'ed-f' }, el('span', { text: label }), s);
+  function check1(label, key, after) {
+    const cb = el('input', { type: 'checkbox' }); cb.checked = !!opts[key]; cb.addEventListener('change', () => { opts[key] = cb.checked; if (after) after(); draw(); });
+    return el('label', { class: 'ed-f row' }, cb, el('span', { text: label }));
   }
   function buildOpts() {
     const rows = [];
-    if (tool === 'road') rows.push(num('Start height (m, blank = follow ground)', 'h0', -3, 11, 0.5), num('End height (m, blank = follow ground)', 'h1', -3, 11, 0.5));
-    if (tool === 'slope') rows.push(num('Height at the point (m)', 'slopeH', -3, 11, 0.5));
-    if (tool === 'terrain') rows.push(sel('Kind', 'blob', Object.entries(BLOB_NAMES)), num('Radius (m)', 'blobSize', 2, 40, 1));
-    if (tool === 'building') {
-      rows.push(num('Height (m)', 'bh', 2.5, 30, 0.5));
-      const cb = el('input', { type: 'checkbox' }); cb.checked = !!opts.shop; cb.addEventListener('change', () => { opts.shop = cb.checked; buildOpts(); });
-      rows.push(el('label', { class: 'ed-f row' }, cb, el('span', { text: 'Shop (awning and a name)' })));
-      if (opts.shop) { const t = el('input', { type: 'text', maxlength: 40, value: opts.shopName }); t.addEventListener('input', () => { opts.shopName = t.value; }); rows.push(el('label', { class: 'ed-f' }, el('span', { text: 'Shop name' }), t)); }
+    if (tool === 'road') {
+      rows.push(num('Start height (m, blank = follow ground)', 'h0', -3, 11, 0.5), num('End height (m, blank = follow ground)', 'h1', -3, 11, 0.5));
+      if (opts.curve) rows.push(el('p', { class: 'ed-note', text: curvePts.length ? curvePts.length + ' point' + (curvePts.length > 1 ? 's' : '') + ' so far. Double-click or press Enter to finish, Esc to cancel.' : 'Click the first point of the road.' }));
     }
-    if (tool === 'lamp') rows.push(sel('Arm points', 'lampE', [[1, 'toward south (+z)'], [-1, 'toward north (-z)']]));
-    if (tool === 'signal') rows.push(sel('Kind', 'sig', [['light', 'Traffic light'], ['police', 'Traffic police']]));
+    if (tool === 'slope') rows.push(num('Height at the point (m)', 'slopeH', -3, 11, 0.5));
+    if (tool === 'terrain') rows.push(num('Radius (m)', 'blobSize', 2, 40, 1));
+    if (tool === 'sculpt' || tool === 'paint') {
+      rows.push(num('Brush size (m across)', 'brushD', 2, 40, 1));
+      if (tool === 'sculpt' && opts.brush !== 'grade') rows.push(num('Strength (m per stroke)', 'brushS', 0.1, 2, 0.1));
+      rows.push(el('p', { class: 'ed-note', text: 'Hold the button and drag. Roads and kerbs are never reshaped; buildings keep their flat plot.' }));
+    }
+    if (tool === 'building') {
+      const b = BUILDINGS[opts.style] || BUILDINGS.house;
+      rows.push(num('Height (m)', 'bh', 2.5, 30, 0.5), check1('Turn to face the nearest road', 'faceRoad'), el('p', { class: 'ed-note', text: b.label + ': ' + b.w + ' by ' + b.d + ' m. Click to place, or drag to draw your own size. Press [ or ] to turn by 15 degrees.' }));
+      if (b.shop) rows.push(el('label', { class: 'ed-f' }, el('span', { text: 'Shop name' }), (() => { const t = el('input', { type: 'text', maxlength: 40, value: opts.shopName }); t.addEventListener('input', () => { opts.shopName = t.value; }); return t; })()));
+    }
+    if (tool === 'lamp') rows.push(el('label', { class: 'ed-f' }, el('span', { text: 'Arm points' }), (() => { const s = el('select', {}, el('option', { value: 1, text: 'toward south (+z)' }), el('option', { value: -1, text: 'toward north (-z)' })); s.value = opts.lampE; s.addEventListener('change', () => { opts.lampE = s.value; }); return s; })()));
     if (tool === 'crossing') rows.push(num('Length (m)', 'cross', 2, 20, 1));
-    if (tool === 'spawn') rows.push(sel('Who appears', 'spawn', Object.entries(SPAWN_NAMES)), num('How many', 'spawnN', 1, 30, 1));
+    if (tool === 'spawn') rows.push(num('How many', 'spawnN', 1, 30, 1));
     optBox.replaceChildren(...rows); optBox.hidden = !rows.length;
   }
   const numOpt = (k, d) => (opts[k] === '' || opts[k] == null || Number.isNaN(Number(opts[k])) ? d : Number(opts[k]));
@@ -274,22 +292,42 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   function snapPt(x, z, toRoad = false) {
     if (toRoad) {
       lines = lines || ED.polylines(st.map);
-      const n = ED.nearestRoad(st.map, x, z, 2.5 + 8 / view.s, lines);
+      const n = ED.nearestRoad(st.map, x, z, 2.5 + tolM(), lines);
       if (n) return { x: Math.round(n.x * 100) / 100, z: Math.round(n.z * 100) / 100, road: n };
     }
     return { x: Math.round(x), z: Math.round(z), road: null };
   }
-  function roadHeightAt(p) { return p.road ? W.edgeH(p.road.edge, p.road.t) : Math.max(0, W.column(p.x, p.z, 0.25).h); }
-  function pickAt(x, z) { lines = lines || ED.polylines(st.map); return ED.hitTest(st.map, x, z, 1.2 + 6 / view.s, lines); }
+  function roadHeightAt(p) { const w = WW(); return p.road ? w.edgeH(p.road.edge, p.road.t) : Math.max(0, w.column(p.x, p.z, 0.25).h); }
+  function pickAt(x, z) { lines = lines || ED.polylines(st.map); return ED.hitTest(st.map, x, z, 1.2 + 0.75 * tolM(), lines); }
+  function roadPsi(n) { return WW().edgePoint(n.edge, n.t, 0).psi; }
+
+  // Where a new building would stand, how it is turned, and its size.
+  function buildingPlan(x, z, w, d) {
+    const b = BUILDINGS[opts.style] || BUILDINGS.house;
+    const o = { cx: Math.round(x * 2) / 2, cz: Math.round(z * 2) / 2, w: w || b.w, depth: d || b.d, h: numOpt('bh', b.h), yaw: Number(opts.yaw) || 0, wall: b.wall, trim: b.trim, shop: b.shop ? { name: opts.shopName } : null };
+    if (opts.faceRoad !== false) {
+      try { lines = lines || ED.polylines(st.map); const r = ED.nearestRoad(st.map, o.cx, o.cz, 40, lines); if (r) o.yaw = Math.round(Math.atan2(-(r.x - o.cx), -(r.z - o.cz)) * 180 / Math.PI * 2) / 2; } catch (e) { /* keep yaw */ }
+    }
+    return o;
+  }
+  const spanBox = (cx, cz, r) => [cx - r, cz - r, cx + r, cz + r];
 
   function pointerAction(kind, x, z, e) {
     const m = st.map;
     if (kind === 'click') {
       switch (tool) {
-        case 'select': { selected = pickAt(x, z); refreshUi(); draw(); break; }
-        case 'terrain': commit(() => ED.addBlob(m, opts.blob, x, z, opts.blobSize, opts.blobSize, 1)); break;
-        case 'tree': commit(() => ED.addTree(m, x, z, 3.6 + (Math.abs(Math.round(x * 7 + z * 3)) % 9) * 0.1, 1.3 + (Math.abs(Math.round(x + z * 5)) % 7) * 0.08), false); break;
+        case 'select': { selected = pickAny(e); refreshUi(); draw(); break; }
+        case 'terrain': commit(() => ED.addBlob(m, opts.blob, x, z, opts.blobSize, opts.blobSize, 1), true, spanBox(x, z, opts.blobSize * 3)); break;
+        case 'tree': { const t = TREES[opts.tree] || TREES.small, j = Math.abs(Math.round(x * 7 + z * 3)) % 9; commit(() => ED.addTree(m, x, z, t.h + j * 0.1, t.r + (Math.abs(Math.round(x + z * 5)) % 7) * 0.08), false); break; }
         case 'lamp': commit(() => ED.addLamp(m, x, z, Number(opts.lampE)), false); break;
+        case 'building': {
+          const o = buildingPlan(x, z), big = Math.max(o.w, o.depth) / 2 + 6;
+          const r = commit(() => ED.addBuildingY(m, o), true, spanBox(o.cx, o.cz, big));
+          if (typeof r === 'string') { selected = { kind: o.shop ? 'shop' : 'building', id: r }; refreshUi(); }
+          break;
+        }
+        case 'road': if (opts.curve) addCurvePoint(x, z, e); break;
+        case 'drop': dropHere(x, z, 'car'); break;
         case 'signal': commit(() => { const n = ED.nearestRoad(m, x, z, 8); const psi = n ? roadPsi(n) : 0; return ED.addSignal(m, x, z, psi, opts.sig); }, false); break;
         case 'crossing': {
           const p = snapPt(x, z, true);
@@ -308,83 +346,333 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
           commit(() => ED.setRoadHeight(m, n.edge, n.t, numOpt('slopeH', 2))); break;
         }
         case 'erase': {
-          const h = pickAt(x, z);
+          const h = pickAny(e);
           if (h && h.kind === 'road') { if (h.edge === 0) toast('The oval loop cannot be erased.'); else commit(() => ED.removeRoad(m, h.edge)); }
-          else if (h) commit(() => ED.removeById(m, h.id));
+          else if (h) commit(() => ED.removeById(m, h.id), h.kind === 'building' || h.kind === 'shop');
           else if (!commit(() => ED.removeBlobNear(m, x, z))) { /* toast already shown */ }
           selected = null; refreshUi(); break;
         }
       }
     } else if (kind === 'drag') {
       const a = drag.a, b = drag.cur;
-      if (tool === 'road') {
+      if (tool === 'road' && !opts.curve) {
         const sa = drag.sa, sb = snapPt(b[0], b[1], true);
         const h0 = opts.h0 === '' ? roadHeightAt(sa) : Number(opts.h0), h1 = opts.h1 === '' ? roadHeightAt(sb) : Number(opts.h1);
         const r = commit(() => ED.addRoad(m, [sa.x, sa.z], [sb.x, sb.z], h0, h1));
         if (r !== false) { selected = { kind: 'road', edge: m.roads.edges.length - 1 }; refreshUi(); }
       } else if (tool === 'building') {
-        const r = commit(() => ED.addBuilding(m, { x0: a[0], z0: a[1], x1: b[0], z1: b[1], h: numOpt('bh', 6), shop: opts.shop ? { name: opts.shopName } : null }));
-        if (typeof r === 'string') { selected = { kind: opts.shop ? 'shop' : 'building', id: r }; refreshUi(); }
+        const cx = (a[0] + b[0]) / 2, cz = (a[1] + b[1]) / 2, o = buildingPlan(cx, cz, Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
+        const r = commit(() => ED.addBuildingY(m, o), true, spanBox(cx, cz, Math.max(o.w, o.depth) / 2 + 6));
+        if (typeof r === 'string') { selected = { kind: o.shop ? 'shop' : 'building', id: r }; refreshUi(); }
       } else if (tool === 'spawn') {
         commit(() => ED.addSpawnArea(m, opts.spawn, a[0], a[1], b[0], b[1], numOpt('spawnN', 3)), false);
       }
     }
   }
-  function roadPsi(n) { return W.edgePoint(n.edge, n.t, 0).psi; }
+
+  // ---------- curved roads: click points, finish with a double-click or Enter ----------
+  let curvePts = [], lastClickT = 0;
+  function addCurvePoint(x, z, e) {
+    const sp = snapPt(x, z, true), now = performance.now(), last = curvePts[curvePts.length - 1];
+    if (curvePts.length >= 2 && last && Math.hypot(last[0] - sp.x, last[1] - sp.z) < 1.5 + tolM() * 3 && now - lastClickT < 450) { finishCurve(); return; }
+    lastClickT = now;
+    if (!last || Math.hypot(last[0] - sp.x, last[1] - sp.z) > 0.5) curvePts.push([sp.x, sp.z]);
+    buildOpts(); draw();
+  }
+  function finishCurve() {
+    if (curvePts.length < 2) { toast('A curved road needs at least two points.'); return; }
+    const pts = curvePts.slice(), w = WW();
+    const h0 = opts.h0 === '' ? Math.max(0, w.column(pts[0][0], pts[0][1], 0.25).h) : Number(opts.h0), h1 = opts.h1 === '' ? Math.max(0, w.column(pts[pts.length - 1][0], pts[pts.length - 1][1], 0.25).h) : Number(opts.h1);
+    curvePts = [];
+    const r = commit(() => ED.addCurve(st.map, pts, h0, h1));
+    if (r !== false) { selected = { kind: 'road', edge: st.map.roads.edges.length - 1 }; }
+    buildOpts(); refreshUi(); draw();
+  }
+
+  // ---------- live edits (drags): applied to the map as you move, one undo step when you let go ----------
+  function liveApply(fn, box) {
+    const r = fn(st.map);
+    if (typeof r === 'string' && r.startsWith('!')) return r;
+    st.dirty = true; lines = null; dirtyGround = true;
+    if (v3) v3.invalidate(box || null, true, st.map); else draw();
+    return r;
+  }
+  function endLive(before, groundBox) {
+    if (snap() === before) return false;
+    st.undo.push(before); if (st.undo.length > 80) st.undo.shift(); st.redo.length = 0; st.dirty = true;
+    check(); refreshUi(); draw();
+    clearTimeout(saveT); saveT = setTimeout(autosave, 800);
+    return true;
+  }
+  // brush stamps
+  function stamp(x, z, s) {
+    const r = clamp(numOpt('brushD', 8), 2, 40) / 2, box = spanBox(x, z, r + 3);
+    if (tool === 'paint') return liveApply(m => ED.paintBrush(m, x, z, r, opts.paint), box);
+    if (opts.brush === 'grade') return liveApply(m => ED.gradeTo(m, x, z, r * 0.7, s.level, r * 0.3 + 1), box);
+    return liveApply(m => ED.sculptBrush(m, x, z, r, numOpt('brushS', 0.4), opts.brush), box);
+  }
+
+  // ---------- 3D: things you can click, and what is drawn over the scene ----------
+  const WW = () => (mode === '3d' && v3 && v3.world) || W;
+  function pickables() {
+    const w = WW(), m = st.map, shops = new Set((m.features.shops || []).map(q => q.id)), out = [];
+    if (!w) return out;
+    m.scenery.forEach(b => {
+      if (b.t === 'bldgN' || b.t === 'bldgY') {
+        const pd = w.pad(b.pad); if (!pd) return;
+        const y0 = pd.h - 0.4, y1 = pd.h + b.h + 0.4, kind = shops.has(b.id) ? 'shop' : 'building';
+        if (b.t === 'bldgN') out.push({ id: b.id, kind, shape: 'obb', cx: (b.x0 + b.x1) / 2, cz: b.zf + b.depth / 2, hx: (b.x1 - b.x0) / 2, hz: b.depth / 2, c: 1, s: 0, y0, y1 });
+        else { const a = (b.yaw || 0) * Math.PI / 180; out.push({ id: b.id, kind, shape: 'obb', cx: b.cx, cz: b.cz, hx: b.w / 2, hz: b.depth / 2, c: Math.cos(a), s: Math.sin(a), y0, y1 }); }
+      } else if (b.t === 'tree' && b.id) { const y = w.heightAt(b.x, b.z); out.push({ id: b.id, kind: 'tree', shape: 'cyl', cx: b.x, cz: b.z, r: Math.max(0.9, b.r), y0: y, y1: y + b.h + b.r }); }
+      else if (b.t === 'lamp' && b.id) { const y = w.heightAt(b.x, b.z); out.push({ id: b.id, kind: 'lamp', shape: 'cyl', cx: b.x, cz: b.z, r: 0.9, y0: y, y1: y + 4.5 }); }
+    });
+    return out;
+  }
+  // What is under the pointer: a standing thing first, otherwise whatever lies on the ground there.
+  function pickAny(e) {
+    if (mode === '3d' && v3) {
+      const g = v3.pickGround(e.clientX, e.clientY), th = v3.pickThings(e.clientX, e.clientY, pickables());
+      if (th && (!g || th.t <= g.t + 2)) return { kind: th.kind, id: th.id };
+      return g ? ED.hitTest(st.map, g.x, g.z, 1.2 + 6 * v3.mpp(), lines || (lines = ED.polylines(st.map))) : null;
+    }
+    const [px, py] = local(e); return pickAt(wx(px), wz(py));
+  }
+  function itemBox(id) {
+    const m = st.map, w = WW(), b = m.scenery.find(q => q.id === id && (q.t === 'bldgN' || q.t === 'bldgY'));
+    if (!b || !w || !w.pad(b.pad)) return null;
+    const y0 = w.pad(b.pad).h;
+    if (b.t === 'bldgN') return [(b.x0 + b.x1) / 2, b.zf + b.depth / 2, (b.x1 - b.x0) / 2, b.depth / 2, 0, y0 - 0.4, y0 + b.h + 0.5];
+    return [b.cx, b.cz, b.w / 2, b.depth / 2, b.yaw || 0, y0 - 0.4, y0 + b.h + 0.5];
+  }
+  function drawStatic3d() {
+    if (!v3 || !v3.world) return;
+    const ov = v3.ov, m = st.map, f = m.features || {}, isSel = id => selected && selected.id === id;
+    ov.use('static'); v3.clearOverlay('static');
+    (f.spawnAreas || []).forEach(a => {
+      const col = isSel(a.id) ? 0xffffff : 0x7A3FB5;
+      ov.patch((a.x0 + a.x1) / 2, (a.z0 + a.z1) / 2, (a.x1 - a.x0) / 2, (a.z1 - a.z0) / 2, 0, 0x7A3FB5, 0.3);
+      ov.drape([[a.x0, a.z0], [a.x1, a.z0], [a.x1, a.z1], [a.x0, a.z1], [a.x0, a.z0]], col, 0.3);
+    });
+    (f.crossings || []).forEach(a => {
+      const yaw = a.psi * 180 / Math.PI;
+      for (let k = -2; k <= 2; k++) { const c = Math.cos(a.psi), s = Math.sin(a.psi); ov.patch(a.x + (k * 0.96) * c, a.z - (k * 0.96) * s, 0.3, a.len / 2, yaw, isSel(a.id) ? 0xffee55 : 0xffffff, 0.9, 0.12); }
+    });
+    (f.signals || []).forEach(a => { const col = a.kind === 'police' ? 0x2B5FD9 : 0xD8392B; ov.post(a.x, a.z, 3.6, 0x333333, 0.12); ov.dot(a.x, v3.groundH(a.x, a.z) + 3.8, a.z, col, 0.45); if (isSel(a.id)) ov.ring(a.x, a.z, 1.2, 0xffffff); });
+    m.roads.junctions.forEach(j => ov.ring(j.x, j.z, 1.6, 0xffffff, 0.3, 24, 0.6));
+    ov.post(m.start.x, m.start.z, 2.6, 0xF2A900, 0.15); ov.ring(m.start.x, m.start.z, 1.2, 0xF2A900);
+    lines = lines || ED.polylines(m);
+    m.roads.edges.forEach((e, i) => {
+      const pts = lines[i], selRoad = selected && selected.kind === 'road' && selected.edge === i;
+      if (selRoad) ov.drape(pts.map(p => [p[0], p[1]]), 0xffffff, 0.5);
+      if (selRoad || tool === 'slope') e.profile.forEach(p => { const q = pointAt(pts, p[0]); ov.dot(q[0], (v3.world.edgeH(i, p[0])) + 1.2, q[1], 0xF2A900, 0.45); });
+      if (e.type === 'curve' && (selRoad || tool === 'road')) e.pts.forEach(p => ov.dot(p[0], v3.groundH(p[0], p[1]) + 0.9, p[1], 0x35c4ff, 0.4));
+    });
+    const ri = tool === 'select' ? rotInfo() : null;
+    if (ri) {
+      ov.ring(ri.cx, ri.cz, ri.r, 0x35c4ff, 0.35, 64, 0.9);
+      ov.drape([[ri.cx, ri.cz], ri.hp], 0x35c4ff, 0.35, 0.9);
+      ov.dot(ri.hp[0], v3.groundH(ri.hp[0], ri.hp[1]) + 0.6, ri.hp[1], 0x35c4ff, 0.55);
+      if (ri.type === 'bldg') { const sb = ED.setbackOf(m, selected.id, lines); if (sb) { ov.drape([[sb.fx, sb.fz], [sb.rx, sb.rz]], 0xffd23f, 0.5); ov.dot(sb.rx, v3.groundH(sb.rx, sb.rz) + 0.5, sb.rz, 0xffd23f, 0.3); } }
+    }
+    if (selected && selected.id) {
+      const b = itemBox(selected.id), it = ED.getItem(m, selected.id);
+      if (b) ov.box(b[0], b[1], b[2] + 0.2, b[3] + 0.2, b[4], b[5], b[6], 0xffffff);
+      else if (it && (it.t === 'tree' || it.t === 'lamp')) ov.ring(it.x, it.z, Math.max(1, it.r || 0.8), 0xffffff, 0.3);
+    }
+    drawDyn3d();
+  }
+  function drawDyn3d() {
+    if (!v3 || !v3.world) return;
+    const ov = v3.ov; ov.use('dyn'); v3.clearOverlay('dyn');
+    if (drag && drag.kind === 'road') ov.drape([drag.a, drag.cur], 0xffffff, 0.5);
+    else if (drag && drag.kind) {
+      const a = drag.a, b = drag.cur, x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), z0 = Math.min(a[1], b[1]), z1 = Math.max(a[1], b[1]);
+      ov.patch((x0 + x1) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (z1 - z0) / 2, 0, 0xffffff, 0.25); ov.drape([[x0, z0], [x1, z0], [x1, z1], [x0, z1], [x0, z0]], 0xffffff, 0.5);
+    } else if (hover && tool === 'building') {
+      const o = buildingPlan(hover[0], hover[1]);
+      ov.box(o.cx, o.cz, o.w / 2, o.depth / 2, o.yaw, v3.groundH(o.cx, o.cz), v3.groundH(o.cx, o.cz) + o.h, 0xffffff, 0.9);
+      ov.patch(o.cx, o.cz, o.w / 2, o.depth / 2, o.yaw, 0xffffff, 0.25);
+      const a = o.yaw * Math.PI / 180, fx = o.cx - Math.sin(a) * (o.depth / 2 + 1.5), fz = o.cz - Math.cos(a) * (o.depth / 2 + 1.5);
+      ov.drape([[o.cx, o.cz], [fx, fz]], 0xffd23f, 0.5);
+    } else if (hover && (tool === 'sculpt' || tool === 'paint')) ov.ring(hover[0], hover[1], numOpt('brushD', 8) / 2, 0xffffff, 0.4, 48);
+    else if (hover && (tool === 'tree' || tool === 'lamp' || tool === 'signal' || tool === 'terrain')) ov.ring(hover[0], hover[1], tool === 'terrain' ? opts.blobSize : 1, 0xffffff, 0.4);
+    if (tool === 'road' && opts.curve && curvePts.length) {
+      const pts = curvePts.slice(); if (hover) pts.push([hover[0], hover[1]]);
+      if (pts.length >= 2) { const c = sampleCurve(pts); ov.drape(c.xs.map((x, i) => [x, c.zs[i]]), 0xffffff, 0.5); }
+      curvePts.forEach(p => ov.dot(p[0], v3.groundH(p[0], p[1]) + 0.9, p[1], 0x35c4ff, 0.4));
+    }
+  }
 
   // ---------- pointer handling ----------
   const ptrs = new Map();
-  let pinch = null, panning = null, moved = 0, downAt = null;
-  const local = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
-  cv.addEventListener('pointerdown', e => {
-    cv.setPointerCapture(e.pointerId); cv.focus({ preventScroll: true });
-    const [px, py] = local(e); ptrs.set(e.pointerId, [px, py]);
-    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), s: view.s, mx: (a[0] + b[0]) / 2, my: (a[1] + b[1]) / 2 }; drag = null; panning = null; return; }
-    const panNow = tool === 'pan' || e.button === 1 || e.button === 2 || spaceDown;
-    if (panNow) { panning = { px, py, cx: view.cx, cz: view.cz }; cv.style.cursor = 'grabbing'; return; }
+  let pinch = null, panning = null, orbiting = null, moved = 0, downAt = null;
+  const activeCanvas = () => (mode === '3d' && v3 ? v3.canvas : cv);
+  const local = e => { const r = activeCanvas().getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  // The world point under a pointer event (ground in 3D, flat map in the fallback view).
+  function toXZ(e) {
+    if (mode === '3d' && v3) { const g = v3.pickGround(e.clientX, e.clientY); return g ? [g.x, g.z] : null; }
+    const [px, py] = local(e); return [wx(px), wz(py)];
+  }
+  const tolM = () => (mode === '3d' && v3 ? 8 * v3.mpp() : 8 / view.s);
+  // ---------- things you can grab: the turn ring, road handles, and the selected thing itself ----------
+  let rot = null, mv = null, hd = null, stroke = null;
+  function rotInfo() {
+    if (!selected || !selected.id) return null;
+    const m = st.map, b = itemBox(selected.id);
+    if (b) { const a = b[4] * Math.PI / 180, r = Math.max(b[2], b[3]) + 2; return { type: 'bldg', cx: b[0], cz: b[1], hx: b[2], hz: b[3], yaw: b[4], hp: [b[0] - Math.sin(a) * r, b[1] - Math.cos(a) * r], r }; }
+    const f = m.features || {}, g = (f.signals || []).find(q => q.id === selected.id) || (f.crossings || []).find(q => q.id === selected.id);
+    if (g) return { type: 'feat', cx: g.x, cz: g.z, hp: [g.x + Math.cos(g.psi) * 2.5, g.z - Math.sin(g.psi) * 2.5], r: 2.5 };
+    return null;
+  }
+  function grabAt(e) {
+    if (!(mode === '3d' && v3) || tool !== 'select') return null;
+    const near = (x, y, z, px = 22) => { const p = v3.project(x, y, z); return Math.hypot(p[0] - e.clientX, p[1] - e.clientY) < px; };
+    const ri = rotInfo();
+    if (ri && near(ri.hp[0], v3.groundH(ri.hp[0], ri.hp[1]) + 0.6, ri.hp[1])) return { kind: 'rot', ri };
+    if (selected && selected.kind === 'road') {
+      const i = selected.edge, ed = st.map.roads.edges[i]; if (!ed) return null;
+      lines = lines || ED.polylines(st.map);
+      if (ed.type === 'curve') for (let k = 0; k < ed.pts.length; k++) if (near(ed.pts[k][0], v3.groundH(ed.pts[k][0], ed.pts[k][1]) + 0.9, ed.pts[k][1])) return { kind: 'cp', edge: i, idx: k };
+      for (let k = 0; k < ed.profile.length; k++) { const q = pointAt(lines[i], ed.profile[k][0]); if (near(q[0], v3.world.edgeH(i, ed.profile[k][0]) + 1.2, q[1])) return { kind: 'ph', edge: i, idx: k, t: ed.profile[k][0], h: ed.profile[k][1] }; }
+    }
+    return null;
+  }
+  const snap15 = (v, e) => (e.altKey ? v : Math.round(v / 15) * 15);
+  const boxAround = (x, z, r) => [x - r, z - r, x + r, z + r];
+  // Apply whatever drag is in progress to the pointer's current position (once per frame).
+  function applyDrags(e, q) {
+    if (rot && q) {
+      const ri = rot.ri;
+      if (ri.type === 'bldg') { const yaw = snap15(Math.atan2(-(q[0] - ri.cx), -(q[1] - ri.cz)) * 180 / Math.PI, e); liveApply(m => ED.turnBuilding(m, rot.id, yaw), boxAround(ri.cx, ri.cz, Math.max(ri.hx, ri.hz) + 8)); }
+      else { const psi = snap15(Math.atan2(-(q[1] - ri.cz), q[0] - ri.cx) * 180 / Math.PI, e) * Math.PI / 180; liveApply(m => ED.turnFeature(m, rot.id, psi), false); }
+      return true;
+    }
+    if (mv && q) {
+      if (!mv.moved) return true;
+      const nx = Math.round((q[0] + mv.off[0]) * 2) / 2, nz = Math.round((q[1] + mv.off[1]) * 2) / 2;
+      liveApply(m => ED.moveItem(m, mv.id, nx, nz), boxAround(nx, nz, mv.r));
+      return true;
+    }
+    if (hd) {
+      if (hd.kind === 'cp' && q) { liveApply(m => ED.moveCurvePoint(m, hd.edge, hd.idx, Math.round(q[0] * 2) / 2, Math.round(q[1] * 2) / 2)); return true; }
+      if (hd.kind === 'ph') { const h = Math.round((hd.h + (hd.y0 - e.clientY) * v3.mpp() * 0.5) * 2) / 2; liveApply(m => ED.setRoadHeight(m, hd.edge, hd.t, h)); return true; }
+    }
+    if (stroke && q) {
+      const r = numOpt('brushD', 8) / 2;
+      if (!stroke.last || Math.hypot(q[0] - stroke.last[0], q[1] - stroke.last[1]) >= Math.max(0.6, r * 0.35)) { stroke.last = q; stamp(q[0], q[1], stroke); }
+      return true;
+    }
+    return false;
+  }
+  const dragging = () => rot || mv || hd || stroke;
+  function onDown(e) {
+    const c = e.currentTarget; c.setPointerCapture(e.pointerId); c.focus({ preventScroll: true });
+    const [px, py] = local(e); ptrs.set(e.pointerId, [px, py, e.clientX, e.clientY]);
+    const is3 = mode === '3d' && v3;
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), a: Math.atan2(b[1] - a[1], b[0] - a[0]), s: view.s, mx: (a[0] + b[0]) / 2, my: (a[1] + b[1]) / 2, cx: (a[2] + b[2]) / 2, cy: (a[3] + b[3]) / 2 };
+      drag = null; panning = null; orbiting = null; if (is3) v3.panEnd(); return;
+    }
+    const shift = e.shiftKey || spaceDown;
+    if (is3) {
+      if (e.button === 1 || (e.button === 0 && shift && tool === 'pan') || (e.button === 2 && shift) || (e.button === 0 && spaceDown)) { v3.panStart(e.clientX, e.clientY); panning = { three: true }; c.style.cursor = 'grabbing'; return; }
+      if (e.button === 2 || (e.button === 0 && tool === 'pan')) { orbiting = { x: e.clientX, y: e.clientY }; c.style.cursor = 'grabbing'; return; }
+    } else if (tool === 'pan' || e.button === 1 || e.button === 2 || spaceDown) { panning = { px, py, cx: view.cx, cz: view.cz }; c.style.cursor = 'grabbing'; return; }
     moved = 0; downAt = [px, py];
-    const x = wx(px), z = wz(py);
-    if (tool === 'road') { const sa = snapPt(x, z, true); drag = { kind: 'road', a: [sa.x, sa.z], sa, cur: [sa.x, sa.z] }; }
+    if (e.button !== 0) return;
+    const p = toXZ(e); if (!p) { drag = null; return; }
+    const [x, z] = p;
+    const g = grabAt(e);
+    if (g) {
+      if (g.kind === 'rot') rot = { id: selected.id, ri: g.ri, before: snap() };
+      else hd = { ...g, before: snap(), y0: e.clientY };
+      return;
+    }
+    if (tool === 'sculpt' || tool === 'paint') {
+      stroke = { before: snap(), last: null, level: Math.round(WW().column(x, z, 0.25).h * 10) / 10 };
+      stroke.last = [x, z]; stamp(x, z, stroke); return;
+    }
+    if (tool === 'select') {
+      const pre = pickAny(e);
+      if (pre && selected && pre.id && pre.id === selected.id && pre.kind !== 'road') {
+        const b = itemBox(pre.id), it = ED.getItem(st.map, pre.id), f = st.map.features || {};
+        const c = b ? [b[0], b[1]] : it && it.x != null ? [it.x, it.z] : (f.spawnAreas || []).filter(a => a.id === pre.id).map(a => [(a.x0 + a.x1) / 2, (a.z0 + a.z1) / 2])[0];
+        if (c) { mv = { id: pre.id, before: snap(), off: [c[0] - x, c[1] - z], moved: false, r: b ? Math.max(b[2], b[3]) + 8 : 8 }; return; }
+      }
+    }
+    if (tool === 'road' && opts.curve) { drag = { kind: null }; }
+    else if (tool === 'road') { const sa = snapPt(x, z, true); drag = { kind: 'road', a: [sa.x, sa.z], sa, cur: [sa.x, sa.z] }; }
     else if (tool === 'building' || tool === 'spawn') { const sp = snapPt(x, z); drag = { kind: tool, a: [sp.x, sp.z], cur: [sp.x, sp.z] }; }
     else drag = { kind: null };
     draw();
-  });
-  cv.addEventListener('pointermove', e => {
-    const [px, py] = local(e); const had = ptrs.has(e.pointerId); if (had) ptrs.set(e.pointerId, [px, py]);
-    const x = wx(px), z = wz(py);
-    hover = [Math.round(x), Math.round(z)];
-    status.textContent = statusText(x, z);
+  }
+  function onMove(e) {
+    const [px, py] = local(e); if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, [px, py, e.clientX, e.clientY]);
+    const is3 = mode === '3d' && v3;
+    lastPtr = e;
     if (pinch && ptrs.size === 2) {
-      const [a, b] = [...ptrs.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      const [a, b] = [...ptrs.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]), ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      const mcx = (a[2] + b[2]) / 2, mcy = (a[3] + b[3]) / 2;
+      if (is3) {
+        v3.panStart(pinch.cx, pinch.cy); v3.panMove(mcx, mcy); v3.panEnd();
+        v3.zoom(pinch.d / d, mcx, mcy); v3.turn(-(ang - pinch.a));
+        pinch.d = d; pinch.a = ang; pinch.cx = mcx; pinch.cy = mcy; return;
+      }
       const bx = wx(pinch.mx), bz = wz(pinch.my);
       view.s = clamp(pinch.s * d / pinch.d, 1.2, 60);
       view.cx = bx - (pinch.mx - cw / 2) / view.s; view.cz = bz - (pinch.my - ch / 2) / view.s;
       draw(); return;
     }
-    if (panning) { view.cx = panning.cx - (px - panning.px) / view.s; view.cz = panning.cz - (py - panning.py) / view.s; draw(); return; }
-    if (drag && downAt) {
-      moved = Math.max(moved, Math.hypot(px - downAt[0], py - downAt[1]));
-      if (drag.kind === 'road') { const sp = snapPt(x, z, true); drag.cur = [sp.x, sp.z]; }
-      else if (drag.kind) { const sp = snapPt(x, z); drag.cur = [sp.x, sp.z]; }
-    }
-    draw();
-  });
-  cv.addEventListener('pointerup', e => {
-    const [px, py] = local(e); ptrs.delete(e.pointerId);
+    if (orbiting) { v3.orbit(e.clientX - orbiting.x, e.clientY - orbiting.y); orbiting.x = e.clientX; orbiting.y = e.clientY; return; }
+    if (panning) { if (panning.three) v3.panMove(e.clientX, e.clientY); else { view.cx = panning.cx - (px - panning.px) / view.s; view.cz = panning.cz - (py - panning.py) / view.s; draw(); } return; }
+    if (!hoverRaf) hoverRaf = requestAnimationFrame(() => {
+      hoverRaf = 0; if (disposed || !lastPtr) return;
+      const q = toXZ(lastPtr);
+      if (q) { hover = [Math.round(q[0]), Math.round(q[1])]; status.textContent = statusText(q[0], q[1]); }
+      if (dragging() && applyDrags(lastPtr, q)) { if (mode === '3d') drawDyn3d(); return; }
+      if (drag && downAt) {
+        const [qx, qy] = local(lastPtr); moved = Math.max(moved, Math.hypot(qx - downAt[0], qy - downAt[1]));
+        if (q && drag.kind === 'road') { const sp = snapPt(q[0], q[1], true); drag.cur = [sp.x, sp.z]; }
+        else if (q && drag.kind) { const sp = snapPt(q[0], q[1]); drag.cur = [sp.x, sp.z]; }
+      }
+      if (mode === '3d') drawDyn3d(); else draw();
+    });
+    if (downAt) { moved = Math.max(moved, Math.hypot(px - downAt[0], py - downAt[1])); if (mv && moved > 6) mv.moved = true; }
+  }
+  function onUp(e) {
+    ptrs.delete(e.pointerId);
     if (pinch) { if (ptrs.size < 2) pinch = null; return; }
-    if (panning) { panning = null; cv.style.cursor = tool === 'pan' ? 'grab' : 'crosshair'; return; }
+    const c = e.currentTarget;
+    if (orbiting) { orbiting = null; c.style.cursor = tool === 'pan' ? 'grab' : 'crosshair'; return; }
+    if (panning) { if (panning.three) v3.panEnd(); panning = null; c.style.cursor = tool === 'pan' ? 'grab' : 'crosshair'; return; }
+    if (rot || hd || stroke || (mv && mv.moved)) {
+      const o = rot || hd || stroke || mv; const q = toXZ(e);
+      if (!stroke && q) applyDrags(e, q);
+      const before = o.before; rot = hd = stroke = null; const wasMv = mv; mv = null;
+      if (endLive(before)) { if (wasMv || before) after(true, null); }
+      drag = null; downAt = null; draw(); return;
+    }
+    if (mv) { mv = null; drag = null; downAt = null; if (q0(e)) pointerAction('click', q0(e)[0], q0(e)[1], e); draw(); return; }
     if (!drag) return;
-    if (drag.kind && moved > 6) pointerAction('drag', 0, 0, e); else pointerAction('click', wx(px), wz(py), e);
+    // the last drag position may not have been processed yet: refresh it from this event
+    const q = toXZ(e);
+    if (q && drag.kind) { const sp = drag.kind === 'road' ? snapPt(q[0], q[1], true) : snapPt(q[0], q[1]); drag.cur = [sp.x, sp.z]; }
+    if (drag.kind && moved > 6) pointerAction('drag', 0, 0, e); else if (q) pointerAction('click', q[0], q[1], e);
     drag = null; downAt = null; draw();
-  });
-  cv.addEventListener('pointercancel', e => { ptrs.delete(e.pointerId); drag = null; panning = null; pinch = null; draw(); });
-  cv.addEventListener('contextmenu', e => e.preventDefault());
-  cv.addEventListener('wheel', e => {
+  }
+  const q0 = e => toXZ(e);
+  function onCancel(e) { ptrs.delete(e.pointerId); drag = null; panning = null; pinch = null; orbiting = null; rot = hd = stroke = mv = null; if (v3) v3.panEnd(); draw(); }
+  function onWheel(e) {
     e.preventDefault();
+    if (mode === '3d' && v3) { v3.zoom(Math.exp(e.deltaY * 0.0015), e.clientX, e.clientY); return; }
     const [px, py] = local(e), bx = wx(px), bz = wz(py);
     view.s = clamp(view.s * Math.exp(-e.deltaY * 0.0015), 1.2, 60);
     view.cx = bx - (px - cw / 2) / view.s; view.cz = bz - (py - ch / 2) / view.s; draw();
-  }, { passive: false });
+  }
+  const handlers = { pointerdown: onDown, pointermove: onMove, pointerup: onUp, pointercancel: onCancel, contextmenu: e => e.preventDefault() };
+  function bindCanvas(c) { Object.entries(handlers).forEach(([k, f]) => c.addEventListener(k, f)); c.addEventListener('wheel', onWheel, { passive: false }); }
+  bindCanvas(cv);
   const onKey = e => {
     if (disposed || root.hidden) return;
     const tag = e.target && e.target.tagName;
@@ -394,17 +682,68 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
     if (typing) return;
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selected) { e.preventDefault(); deleteSelected(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && selected && selected.id) { e.preventDefault(); clip = selected.id; toast('Copied. Ctrl+V pastes at the pointer.'); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') { e.preventDefault(); const q = lastPtr ? toXZ(lastPtr) : null; if (q) pasteAt(q[0] != null ? q[0] : q.x, q[1] != null ? q[1] : q.z); return; }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selected) { e.preventDefault(); deleteSelected(); return; }
+    if (e.key === 'Enter' && tool === 'road' && opts.curve && curvePts.length) { e.preventDefault(); finishCurve(); return; }
+    if (e.key === '[' || e.key === ']') {
+      const d = e.key === '[' ? 15 : -15;
+      if (selected && ED.getItem(st.map, selected.id) && /^bldg/.test(ED.getItem(st.map, selected.id).t)) { const b = ED.getItem(st.map, selected.id); commit(() => ED.turnBuilding(st.map, selected.id, (b.yaw || 0) + d), true, boxAround(b.cx != null ? b.cx : (b.x0 + b.x1) / 2, b.cz != null ? b.cz : b.zf + b.depth / 2, 16)); }
+      else { opts.yaw = (Number(opts.yaw) || 0) + d; opts.faceRoad = false; buildOpts(); draw(); }
+      return;
+    }
+    if (mode === '3d' && v3) {
+      const k = e.key.toLowerCase();
+      if (k === 'q') v3.turn(-Math.PI / 12); else if (k === 'e') v3.turn(Math.PI / 12);
+      else if (k === 'r') v3.tilt(0.08); else if (k === 'f') v3.tilt(-0.08);
+      else if (k === '=' || k === '+') v3.zoom(0.85); else if (k === '-') v3.zoom(1.18);
+      else if (k === 'home') v3.preset('iso');
+    }
   };
   window.addEventListener('keydown', onKey); window.addEventListener('keyup', onKey);
 
   function statusText(x, z) {
     let h = '';
-    try { if (W) h = ' · ground ' + W.column(x, z, 0.25).h.toFixed(1) + ' m'; } catch (e) {}
+    try { const w = WW(); if (w) h = ' · ground ' + w.column(x, z, 0.25).h.toFixed(1) + ' m'; } catch (e) {}
     return 'x ' + x.toFixed(1) + ', z ' + z.toFixed(1) + h + (st.dirty ? ' · unsaved changes' : '');
   }
 
   // ---------- panels ----------
+  // ---------- copy, rows, drop-in test drive (E6) ----------
+  let clip = null;
+  function copyThenPaste(id) {
+    const it = ED.getItem(st.map, id); if (!it) return;
+    const cx = it.cx != null ? it.cx : it.x != null ? it.x : (it.x0 + it.x1) / 2, cz = it.cz != null ? it.cz : it.z != null ? it.z : it.zf != null ? it.zf + it.depth / 2 : (it.z0 + it.z1) / 2;
+    clip = id; pasteAt(cx + 6, cz + 6);
+  }
+  function pasteAt(x, z) {
+    if (!clip || !ED.getItem(st.map, clip)) { toast('Copy something first (select it, then Ctrl+C).'); return; }
+    const src = ED.getItem(st.map, clip), big = Math.max(src.w || 0, src.depth || 0, 8) + 8;
+    const r = commit(() => ED.duplicateItem(st.map, clip, x, z), true, spanBox(x, z, big));
+    if (typeof r === 'string') {
+      const f = st.map.features || {}, n = ED.getItem(st.map, r);
+      const kind = (f.signals || []).some(q => q.id === r) ? 'signal' : (f.crossings || []).some(q => q.id === r) ? 'crossing' : (f.spawnAreas || []).some(q => q.id === r) ? 'spawn' : n && /^bldg/.test(n.t) ? ((f.shops || []).some(q => q.id === r) ? 'shop' : 'building') : (n ? n.t : 'building');
+      selected = { kind, id: r }; refreshUi(); draw();
+    }
+  }
+  function rowAlong(id) {
+    const it = ED.getItem(st.map, id), m = st.map; if (!it) return;
+    const w = it.w != null ? it.w : it.x1 - it.x0, d = it.depth, cx = it.cx != null ? it.cx : (it.x0 + it.x1) / 2, cz = it.cz != null ? it.cz : it.zf + d / 2;
+    lines = lines || ED.polylines(m);
+    const r = ED.nearestRoad(m, cx, cz, 60, lines); if (!r) { toast('There is no road near this building.'); return; }
+    const W0 = WW(); if (!W0) return;
+    const side = Math.hypot(W0.edgePoint(r.edge, r.t, 1).x - cx, W0.edgePoint(r.edge, r.t, 1).z - cz) < Math.hypot(W0.edgePoint(r.edge, r.t, -1).x - cx, W0.edgePoint(r.edge, r.t, -1).z - cz) ? 1 : -1;
+    const sb = ED.setbackOf(m, id, lines), shopName = ((m.features.shops || []).find(q => q.id === id) || {}).name;
+    const n = commit(() => ED.frontage(m, { edge: r.edge, side, style: { w, d, h: it.h, wall: it.wall, trim: it.trim }, setback: sb ? sb.dist : 2, gap: 1, t0: r.t + w / 2 + 1, shop: shopName ? { name: shopName } : null }), true, [Math.min(cx, r.x) - 200, Math.min(cz, r.z) - 200, Math.max(cx, r.x) + 200, Math.max(cz, r.z) + 200]);
+    if (typeof n === 'number') toast(n ? 'Placed ' + n + ' more along the road.' : 'No room along the road beyond this building.');
+  }
+  function dropHere(x, z, kind) {
+    const r = validateMap(st.map); if (!r.ok) { toast(describeErrors(r, 2)); return; }
+    const mm = ED.clone(st.map), dp = ED.dropPoint(mm, x, z);
+    ED.setStart(mm, dp.x, dp.z, dp.psi); autosave();
+    onPlay && onPlay(mm, kind || 'car', st);
+  }
+
   function deleteSelected() {
     if (!selected) return;
     if (selected.kind === 'road') { if (selected.edge === 0) { toast('The oval loop cannot be removed.'); return; } commit(() => ED.removeRoad(st.map, selected.edge)); }
@@ -434,12 +773,37 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
         const it = ED.getItem(m, selected.id);
         if (it) {
           rows.push(el('h4', { text: ({ building: 'Building', shop: 'Shop', tree: 'Tree', lamp: 'Lamp', signal: 'Signal', crossing: 'Crossing', spawn: 'Spawn area' })[selected.kind] + ' ' + selected.id }));
-          if (it.t === 'bldgN') {
+          if (it.t === 'bldgN' || it.t === 'bldgY') {
+            const cx = it.t === 'bldgY' ? it.cx : (it.x0 + it.x1) / 2, cz = it.t === 'bldgY' ? it.cz : it.zf + it.depth / 2, bx = boxAround(cx, cz, Math.max(it.w || it.x1 - it.x0, it.depth) / 2 + 12);
             const h = el('input', { type: 'number', min: 2.5, max: 30, step: 0.5, value: it.h });
             h.addEventListener('change', () => commit(() => ED.setBuildingHeight(m, it.id, Number(h.value)), false));
             rows.push(el('label', { class: 'ed-f' }, el('span', { text: 'Height (m)' }), h));
+            const yaw = el('input', { type: 'number', min: -180, max: 180, step: 5, value: it.yaw || 0 });
+            yaw.addEventListener('change', () => commit(() => ED.turnBuilding(m, it.id, Number(yaw.value)), true, bx));
+            rows.push(el('label', { class: 'ed-f' }, el('span', { text: 'Turn (degrees, 0 = front faces north)' }), yaw));
+            const tb = (txt, title, fn) => { const b = el('button', { class: 'btn', type: 'button', title, text: txt }); b.addEventListener('click', fn); return b; };
+            rows.push(el('div', { class: 'ed-row3' },
+              tb('\u21BA 15\u00B0', 'Turn left 15 degrees ( [ )', () => commit(() => ED.turnBuilding(m, it.id, (it.yaw || 0) + 15), true, bx)),
+              tb('\u21BB 15\u00B0', 'Turn right 15 degrees ( ] )', () => commit(() => ED.turnBuilding(m, it.id, (it.yaw || 0) - 15), true, bx)),
+              tb('Face road', 'Turn the front to face the nearest road', () => commit(() => ED.faceRoad(m, it.id), true, bx))));
+            const sb = ED.setbackOf(m, it.id, lines);
+            if (sb) {
+              const sbi = el('input', { type: 'number', min: 0, max: 60, step: 0.5, value: sb.dist });
+              sbi.addEventListener('change', () => commit(() => ED.setSetback(m, it.id, Number(sbi.value)), true, bx));
+              rows.push(el('label', { class: 'ed-f' }, el('span', { text: 'Space between the front and the road edge (m)' }), sbi));
+            }
+            rows.push(el('div', { class: 'ed-row3' },
+              tb('Copy', 'Make a copy next to it (Ctrl+C then Ctrl+V pastes at the pointer)', () => copyThenPaste(it.id)),
+              tb('Row along road', 'Line up copies of this building along the same side of the road, all facing it', () => rowAlong(it.id)),
+              tb('Drive here', 'Test drive starting next to this building', () => dropHere(it.cx != null ? it.cx : (it.x0 + it.x1) / 2, it.cz != null ? it.cz : it.zf + it.depth / 2, 'car'))));
             const sh = (m.features.shops || []).find(q => q.id === it.id);
             if (sh) { const t = el('input', { type: 'text', maxlength: 40, value: sh.name }); t.addEventListener('change', () => commit(() => ED.renameShop(m, it.id, t.value), false)); rows.push(el('label', { class: 'ed-f' }, el('span', { text: 'Shop name' }), t)); }
+            rows.push(el('p', { class: 'ed-note', text: 'Drag the blue dot on the ring to turn it. Drag the building to move it.' }));
+          }
+          if (selected.kind === 'signal' || selected.kind === 'crossing') {
+            const yaw = el('input', { type: 'number', min: -360, max: 360, step: 15, value: Math.round(it.psi * 180 / Math.PI) });
+            yaw.addEventListener('change', () => commit(() => ED.turnFeature(m, it.id, Number(yaw.value) * Math.PI / 180), false));
+            rows.push(el('label', { class: 'ed-f' }, el('span', { text: 'Direction (degrees)' }), yaw));
           }
           if (selected.kind === 'spawn') {
             const n = el('input', { type: 'number', min: 1, max: 30, step: 1, value: it.count });
@@ -476,7 +840,9 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   });
   bUndo.addEventListener('click', undo); bRedo.addEventListener('click', redo);
   function replaceMap(m, note) {
-    ED.ensureFeatures(m); st.map = m; st.undo = []; st.redo = []; st.dirty = false; selected = null; view.s = 0; resize(); fit(); after(true); if (note) toast(note);
+    ED.ensureFeatures(m); st.map = m; st.undo = []; st.redo = []; st.dirty = false; selected = null; view.s = 0; resize(); fit();
+    if (v3) { v3.setMap(st.map); v3.fitView(); }
+    after(true); if (note) toast(note);
   }
   bNew.addEventListener('click', () => replaceMap(ED.newMapFrom(base, { id: 'my-map', name: 'My map' }), 'Started a new map.'));
   bHill.addEventListener('click', () => replaceMap(ED.clone(base), 'Opened a copy of Hill Loop. Change the name before you save.'));
@@ -497,8 +863,46 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   const play = kind => { const r = validateMap(st.map); if (!r.ok) { toast(describeErrors(r, 2)); return; } autosave(); onPlay && onPlay(ED.clone(st.map), kind, st); };
   bPlayCar.addEventListener('click', () => play('car')); bPlayBike.addEventListener('click', () => play('bike'));
 
+  // ---------- 3D and flat views ----------
+  const bFlat = navBtn('Flat', 'Switch between the 3D view and the flat map', () => setMode(mode === '3d' ? 'flat' : '3d'));
+  const nav3 = [
+    navBtn('3D', 'Tilted view of the whole map', () => v3 && v3.preset('iso')), navBtn('Top', 'Look straight down', () => v3 && v3.preset('top')),
+    navBtn('Street', 'Street level, from the ground', () => v3 && v3.preset('street')),
+    navBtn('\u21BA', 'Turn the view left (Q)', () => v3 && v3.turn(-Math.PI / 12)), navBtn('\u21BB', 'Turn the view right (E)', () => v3 && v3.turn(Math.PI / 12)),
+    navBtn('\u25B2', 'Tilt up (R)', () => v3 && v3.tilt(0.1)), navBtn('\u25BC', 'Tilt down (F)', () => v3 && v3.tilt(-0.1)),
+    navBtn('+', 'Zoom in', () => v3 && v3.zoom(0.8)), navBtn('\u2212', 'Zoom out', () => v3 && v3.zoom(1.25))
+  ];
+  stage.append(compass);
+  compass.append(el('i', { class: 'ed-needle' }));
+  compass.addEventListener('click', () => v3 && v3.setYaw(0));
+  function make3d() {
+    if (v3) return true;
+    v3 = createView3D(stage, {
+      onFrame: c => { st.cam3 = { tx: c.tx, ty: c.ty, tz: c.tz, yaw: c.yaw, pitch: c.pitch, dist: c.dist }; compass.style.setProperty('--yaw', c.yaw + 'rad'); },
+      onFail: msg => { console.warn('3D view unavailable:', msg); }
+    });
+    if (!v3) return false;
+    bindCanvas(v3.canvas);
+    v3.setMap(st.map);
+    if (st.cam3) Object.assign(v3.cam, st.cam3);
+    return true;
+  }
+  function setMode(m) {
+    if (m === '3d' && !make3d()) { toast('The 3D view is not available on this device, so this is the flat map.'); m = 'flat'; }
+    mode = m;
+    if (m === 'flat' && v3) { v3.dispose(); v3 = null; dirtyGround = true; W = null; }
+    cv.style.display = m === 'flat' ? '' : 'none';
+    if (v3) v3.canvas.style.display = m === '3d' ? '' : 'none';
+    nav3.forEach(b => { b.hidden = m !== '3d'; }); compass.hidden = m !== '3d';
+    bFlat.textContent = m === '3d' ? 'Flat' : '3D';
+    activeCanvas().style.cursor = tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair';
+    resize(); draw();
+  }
+
   // ---------- start ----------
-  setTool('select'); check(); refreshUi(); resize(); fit(); draw();
+  renderTray();
+  setMode('3d'); setTool('select', BASIC[0]); check(); refreshUi(); resize(); fit(); draw();
+  setTimeout(() => { if (disposed) return; try { Object.assign(pieces, renderPieces(base)); renderTray(); } catch (e) { console.warn(e); } }, 120);
   // offer the last unsaved draft (once, only if this is a fresh editor)
   if (!state) {
     try {
@@ -514,11 +918,21 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
 
   return {
     state: st,
-    toClient(x, z) { const r = cv.getBoundingClientRect(); return [r.left + X(x), r.top + Z(z)]; },
-    escape() { if (tool !== 'select') setTool('select'); else { selected = null; refreshUi(); draw(); } },
+    toClient(x, z) {
+      if (mode === '3d' && v3) { const p = v3.project(x, v3.groundH(x, z), z); return [p[0], p[1]]; }
+      const r = cv.getBoundingClientRect(); return [r.left + X(x), r.top + Z(z)];
+    },
+    get mode() { return mode; },
+    // where the turn handle of the selected thing is on screen (for tests and for touch hints)
+    rotHandle() { const ri = rotInfo(); if (!ri || !v3) return null; const p = v3.project(ri.hp[0], v3.groundH(ri.hp[0], ri.hp[1]) + 0.6, ri.hp[1]); return { client: [p[0], p[1]], centre: [ri.cx, ri.cz], r: ri.r }; },
+    handles() { const out = []; if (selected && selected.kind === 'road' && v3) { const e = st.map.roads.edges[selected.edge]; if (e && e.type === 'curve') e.pts.forEach((q, i) => { const p = v3.project(q[0], v3.groundH(q[0], q[1]) + 0.9, q[1]); out.push({ idx: i, client: [p[0], p[1]] }); }); } return out; },
+    get view3d() { return v3; },
+    setMode,
+    escape() { if (curvePts.length) { curvePts = []; buildOpts(); draw(); } else if (tool !== 'select') setTool('select', BASIC[0]); else { selected = null; refreshUi(); draw(); } },
     dispose() {
       disposed = true; cancelAnimationFrame(raf); clearTimeout(saveT); ro.disconnect();
       window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey);
+      if (v3) { v3.dispose(); v3 = null; }
       ground = null; W = null; lines = null; cv.width = cv.height = 0;
       root.replaceChildren();
     }

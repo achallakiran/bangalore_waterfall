@@ -39,10 +39,14 @@ Open the live github.io page on each device. Tick what works; note anything odd 
 - [ ] Hill Loop looks and plays exactly as before on every budget, including Low.
 - [ ] Phone: ride for 5 minutes, leave and start again 3 times. The page stays smooth and does not reload itself.
 
-## Map editor (Phase 4)
-- [ ] Main menu, Map editor opens a map view with tools on the side (below the map on a phone).
-- [ ] Mac and Windows: draw a road by dragging, shape it with Slope, drag a building, tick Shop and name it. Ctrl or Cmd + Z undoes.
-- [ ] Mouse: wheel zooms, right-drag or Space-drag pans. Touch: one finger uses the tool, Pan tool or two fingers moves the view, pinch zooms.
-- [ ] Save file downloads a .json; Maps, Open a map file plays it.
-- [ ] Test drive: car and bike both start on the edited map; Exit returns to the editor with your work.
+## Map editor (3D)
+- [ ] Main menu, Map editor opens a 3D view of the ground with a picture tray (below the view on a phone). The Flat button gives a top-down view.
+- [ ] Desktop: drag with Look (or right-drag) turns and tilts; Shift or Space-drag slides; wheel zooms toward the pointer; Q/E turn, R/F tilt. Touch: one finger uses the tool, Look or two fingers turns, pinch zooms.
+- [ ] Place a house and a shop; drag the blue dot on the ring to turn it; Face road points the front at the road; the space field changes the gap to the road.
+- [ ] Row along road lines up copies on one side of the road; Copy and Ctrl+C / Ctrl+V work; one Ctrl or Cmd + Z undoes a whole row.
+- [ ] Draw a straight and a curved road; drag a curve handle; Slope a road.
+- [ ] Ground tab: Raise, Lower, Smooth, Level and Paint change the ground between road and building; roads do not change.
+- [ ] Save file downloads a .json; Maps, Open a map file plays it with the turned buildings solid.
+- [ ] Test drive (car and bike) and Drive here start on the edited map; Exit returns to the editor with the work and the camera.
+- [ ] Phone: switch 3D and Flat 5 times, open and leave the editor 3 times. The page stays smooth and does not reload itself.
 - [ ] Hill Loop itself still looks and drives exactly as before.

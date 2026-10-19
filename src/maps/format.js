@@ -1,13 +1,14 @@
 // Map file format v1 ("hill-loop-map"): what a map JSON must contain, and a validator that explains what is wrong.
 // Maps are data, never code. The validator is the only door: nothing that fails it reaches the game.
+import { sampleCurve } from '../engine/curve.js';
 export const FORMAT = 'hill-loop-map';
 export const VERSION = 1;
 // Limits protect phones from files that would build far too much.
-export const LIMITS = { maxBytes: 2000000, slabMin: 20, slabMax: 400, maxEdges: 64, maxPads: 64, maxJunctions: 64, maxPotholes: 600, maxTraffic: 12, maxSignals: 64, maxCrossings: 64, maxSpawnAreas: 32, maxShops: 64, maxScenery: 4000, maxPrims: 20000 };
+export const LIMITS = { maxBytes: 2000000, slabMin: 20, slabMax: 400, maxEdges: 64, maxPads: 64, maxJunctions: 64, maxPotholes: 600, maxTraffic: 12, maxSignals: 64, maxCrossings: 64, maxSpawnAreas: 32, maxShops: 64, maxScenery: 4000, maxPrims: 20000, maxSculpt: 60000, maxPaint: 80000 };
 export const TRAFFIC_KEYS = ['nBike', 'nAuto'];
 export const SPAWN_KINDS = ['pedestrian', 'cow', 'buffalo', 'goat', 'dog', 'vehicle'];
-export const SCENERY_TYPES = ['prims', 'windows', 'tree', 'lamp', 'bldgN', 'guardposts', 'cones', 'scatter'];
-const PRIM_ARITY = { B: 9, PT: 8, C: 9, S: 7 };   // tag + fields
+export const SCENERY_TYPES = ['prims', 'windows', 'tree', 'lamp', 'bldgN', 'bldgY', 'guardposts', 'cones', 'scatter'];
+const PRIM_ARITY = { B: 9, PT: 8, C: 9, S: 7, OB: 10, OPT: 9 };   // tag + fields
 
 export function validateMap(m) {
   const errors = [];
@@ -100,7 +101,14 @@ export function validateMap(m) {
           num(p + '.L', e.L, 1, 500); num(p + '.R', e.R, 3, 500);
           if (fin(e.L) && fin(e.R)) profile(p + '.profile', e.profile, 4 * e.L + 2 * Math.PI * e.R, T);
         } else {
-          if (e.type !== 'line') return err(p + '.type', 'cross roads must be of type "line"');
+          if (e.type === 'curve') {
+            if (!arr(p + '.pts', e.pts, 2, 24)) return;
+            let okc = true;
+            e.pts.forEach((q, j) => { if (!arr(p + '.pts[' + j + ']', q, 2, 2) || !fin(q[0]) || !fin(q[1]) || Math.abs(q[0]) > 5000 || Math.abs(q[1]) > 5000) { okc = false; err(p + '.pts[' + j + ']', 'must be [x, z] within the map'); } });
+            if (okc) { const len = sampleCurve(e.pts).len; if (len < 1) err(p, 'must be at least 1 m long'); else profile(p + '.profile', e.profile, len, T); }
+            return;
+          }
+          if (e.type !== 'line') return err(p + '.type', 'cross roads must be of type "line" or "curve"');
           let ok = true;
           ['a', 'b'].forEach(k => { if (!arr(p + '.' + k, e[k], 2, 2) || !fin(e[k][0]) || !fin(e[k][1])) ok = false; });
           if (ok) { const len = Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]); if (len < 1) err(p, 'must be at least 1 m long'); else profile(p + '.profile', e.profile, len, T); }
@@ -127,6 +135,7 @@ export function validateMap(m) {
     ['x0', 'x1', 'z0', 'z1', 'h', 'm'].forEach(k => num(p + '.' + k, q[k], -5000, 5000));
     if (fin(q.x0) && fin(q.x1) && q.x0 >= q.x1) err(p, 'x0 must be below x1');
     if (fin(q.z0) && fin(q.z1) && q.z0 >= q.z1) err(p, 'z0 must be below z1');
+    if (q.yaw !== undefined) num(p + '.yaw', q.yaw, -360, 360);
   });
 
   // potholes
@@ -179,16 +188,16 @@ export function validateMap(m) {
       case 'prims':
         if (arr(p + '.p', it.p, 0, 5000)) it.p.forEach((q, j) => {
           const pp = p + '.p[' + j + ']';
-          if (!Array.isArray(q) || !(q[0] in PRIM_ARITY)) return err(pp, 'must start with B, PT, C or S');
+          if (!Array.isArray(q) || !(q[0] in PRIM_ARITY)) return err(pp, 'must start with B, PT, C, S, OB or OPT');
           prims++;
           if (q.length !== PRIM_ARITY[q[0]]) return err(pp, q[0] + ' needs ' + (PRIM_ARITY[q[0]] - 1) + ' values after the tag');
-          const colIdx = { B: 7, PT: 7, C: 7, S: 5 }[q[0]];
+          const colIdx = { B: 7, PT: 7, C: 7, S: 5, OB: 8, OPT: 8 }[q[0]];
           for (let k = 1; k < q.length; k++) { if (k === colIdx) colour(pp + '[' + k + ']', q[k]); else if (q[0] === 'C' && k === 1) { if (!['x', 'y', 'z'].includes(q[k])) err(pp + '[1]', 'axis must be x, y or z'); } else padRef(pp + '[' + k + ']', q[k]); }
         });
         if (arr(p + '.solids', it.solids, 0, 1000)) it.solids.forEach((q, j) => {
           const pp = p + '.solids[' + j + ']';
-          if (!Array.isArray(q) || (q[0] !== 'b' && q[0] !== 'c')) return err(pp, 'must start with b or c');
-          if (q.length !== (q[0] === 'b' ? 5 : 4)) return err(pp, 'has the wrong number of values');
+          if (!Array.isArray(q) || (q[0] !== 'b' && q[0] !== 'c' && q[0] !== 'o')) return err(pp, 'must start with b, c or o');
+          if (q.length !== (q[0] === 'b' ? 5 : q[0] === 'o' ? 6 : 4)) return err(pp, 'has the wrong number of values');
           for (let k = 1; k < q.length; k++) num(pp + '[' + k + ']', q[k], -5000, 5000);
         });
         break;
@@ -204,6 +213,17 @@ export function validateMap(m) {
         if (typeof it.pad !== 'string' || !padIds.has(it.pad)) err(p + '.pad', 'refers to a pad that does not exist');
         ['zf', 'x0', 'x1', 'depth', 'h', 'ww', 'pitch'].forEach(k => num(p + '.' + k, it[k], -5000, 5000));
         if (fin(it.pitch) && it.pitch <= 0) err(p + '.pitch', 'must be above 0');
+        colour(p + '.wall', it.wall); colour(p + '.trim', it.trim);
+        if (arr(p + '.ys', it.ys, 1, 16)) it.ys.forEach((v, j) => num(p + '.ys[' + j + ']', v, -100, 100));
+        if (arr(p + '.cols', it.cols, 1, 16)) it.cols.forEach((v, j) => colour(p + '.cols[' + j + ']', v));
+        break;
+      case 'bldgY':
+        if (typeof it.pad !== 'string' || !padIds.has(it.pad)) err(p + '.pad', 'refers to a pad that does not exist');
+        ['cx', 'cz', 'w', 'depth', 'h', 'ww', 'pitch'].forEach(k => num(p + '.' + k, it[k], -5000, 5000));
+        if (fin(it.w) && it.w <= 0) err(p + '.w', 'must be above 0');
+        if (fin(it.depth) && it.depth <= 0) err(p + '.depth', 'must be above 0');
+        if (fin(it.pitch) && it.pitch <= 0) err(p + '.pitch', 'must be above 0');
+        if (it.yaw !== undefined) num(p + '.yaw', it.yaw, -360, 360);
         colour(p + '.wall', it.wall); colour(p + '.trim', it.trim);
         if (arr(p + '.ys', it.ys, 1, 16)) it.ys.forEach((v, j) => num(p + '.ys[' + j + ']', v, -100, 100));
         if (arr(p + '.cols', it.cols, 1, 16)) it.cols.forEach((v, j) => colour(p + '.cols[' + j + ']', v));
@@ -233,6 +253,26 @@ export function validateMap(m) {
       }
     }
   });
+  // layers (optional): hand-sculpted height (1 m lattice, centimetres) and hand-painted surface (0.5 m lattice, code into PAINT_KINDS)
+  if (m.layers !== undefined) {
+    const Ly = m.layers;
+    if (!isObj(Ly)) err('layers', 'must be an object');
+    else {
+      const cells = (name, max, cell, lo, hi) => {
+        const L2 = Ly[name];
+        if (L2 === undefined) return;
+        if (!isObj(L2)) return err('layers.' + name, 'must be an object');
+        if (L2.cell !== cell) err('layers.' + name + '.cell', 'must be ' + cell);
+        if (!arr('layers.' + name + '.cells', L2.cells, 0, max)) return;
+        for (let i = 0; i < L2.cells.length; i++) {
+          const c = L2.cells[i];
+          if (!Array.isArray(c) || c.length !== 3 || !c.every(Number.isInteger) || Math.abs(c[0]) > 10000 || Math.abs(c[1]) > 10000 || c[2] < lo || c[2] > hi) { err('layers.' + name + '.cells[' + i + ']', 'must be [x, z, value] whole numbers in range'); return; }
+        }
+      };
+      cells('sculpt', LIMITS.maxSculpt, 1, -3000, 3000);
+      cells('paint', LIMITS.maxPaint, 0.5, 0, 7);
+    }
+  }
   // features (optional): things the editor places that later versions of the game bring to life. The current game ignores them.
   if (m.features !== undefined) {
     const F = m.features;

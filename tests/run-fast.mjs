@@ -163,5 +163,118 @@ ok(parseMap(text).meta.id === 'hill-loop', 'parseMap accepts the shipped file');
   ok(validateMap(fresh()).ok, 'validator: maps without a features section are still valid');
 }
 
+// 6. engine E1/E2: ground layers and turned buildings
+{
+  const m = ED.newMapFrom(fresh());
+  const valid = (label) => { const r = validateMap(m); ok(r.ok, 'layers: ' + label + (r.ok ? '' : ': ' + describeErrors(r, 4))); return r.ok; };
+  const H = (x, z) => createWorld(m).column(x, z, 0.25);
+  const h0 = H(-37, 2).h, k0 = H(-37, 2).kind, roadH0 = H(0, -15).h;
+  ok(ED.sculptBrush(m, -37, 2, 5, 1.5, 'raise') === true && Math.abs(H(-37, 2).h - (h0 + 1.5)) < 0.05, 'layers: raising ground by 1.5 m lifts the centre by 1.5 m');
+  ok(H(-37, 9).h === createWorld(ED.newMapFrom(fresh())).column(-37, 9, 0.25).h, 'layers: ground outside the brush is untouched');
+  valid('map with a sculpted hump');
+  ED.sculptBrush(m, -37, 2, 5, 1.5, 'lower');
+  ok(!m.layers && Math.abs(H(-37, 2).h - h0) < 1e-9, 'layers: lowering it back removes the layer entirely');
+  ok(ED.gradeTo(m, -37, 2, 3, 5, 3) === true && Math.abs(H(-37, 2).h - 5) < 0.02 && Math.abs(H(-36, 3).h - 5) < 0.02, 'layers: grade-to sets an exact level');
+  valid('map after grading');
+  ok(ED.paintBrush(m, -37, 2, 2, 'paver') === true && H(-37, 2).kind === 19 && H(-30, 14).kind === createWorld(ED.newMapFrom(fresh())).column(-30, 14, 0.25).kind, 'layers: paint changes the surface under the brush only');
+  valid('map with painted pavers');
+  ok(ED.paintBrush(m, -37, 2, 2, 'lava').startsWith('!'), 'layers: an unknown surface is refused');
+  ED.paintBrush(m, -37, 2, 3, 'erase'); ok(H(-37, 2).kind === k0, 'layers: erase gives back the natural surface');
+  ok(Math.abs(H(0, -15).h - roadH0) < 1e-9 && H(0, -15).kind === createWorld(ED.newMapFrom(fresh())).column(0, -15, 0.25).kind, 'layers: tarmac is never changed by a brush');
+  ED.sculptBrush(m, -37, 2, 4, 1, 'raise'); ED.sculptBrush(m, -37, 2, 6, 1, 'smooth'); valid('map after smoothing');
+  const bad = JSON.parse(JSON.stringify(m)); bad.layers.sculpt.cells[0] = [1.5, 2, 3];
+  ok(!validateMap(bad).ok, 'layers: fractional lattice cells are refused');
+  const bad2 = JSON.parse(JSON.stringify(m)); bad2.layers.sculpt.cells.push([0, 0, 99999]);
+  ok(!validateMap(bad2).ok, 'layers: absurd heights are refused');
+  ok(ED.clearLayers(m) === true && !m.layers, 'layers: clearing removes them');
+
+  // turned buildings
+  const id = ED.addBuildingY(m, { cx: -37, cz: 2, w: 6, depth: 4, h: 6, yaw: 0, shop: { name: 'Turn Stores' } });
+  ok(typeof id === 'string' && !id.startsWith('!'), 'turn: a building is added with a yaw');
+  valid('map with a turnable shop');
+  ok(ED.turnBuilding(m, id, 30) === 30 && m.pads.find(p => p.id === id).yaw === 30, 'turn: turning moves the pad with it');
+  valid('map with a turned shop');
+  const sh = m.features.shops.find(q => q.id === id);
+  ok(sh.x1 - sh.x0 > 6 && sh.z1 - sh.z0 > 4, 'turn: the shop box grows to cover the turned footprint');
+  ok(ED.hitTest(m, -37, 2).id === id, 'turn: a click on the turned building finds it');
+  const f = ED.faceRoadYaw(m, id);
+  ok(f.yaw < -30 && f.yaw > -90 && f.dist > 0, `turn: the nearest road lies east-north-east, so facing it turns the front to between -30 and -90 degrees (${f.yaw})`);
+  ok(ED.faceRoad(m, id) === f.yaw, 'turn: face-the-road applies that yaw');
+  valid('map after facing the road');
+  const old = ED.addBuilding(m, { x0: -40, x1: -34, z0: 8, z1: 12, h: 5, shop: { name: 'Old' } });
+  ok(ED.turnBuilding(m, old, 45) === 45 && m.scenery.some(q => q.t === 'bldgY' && q.id === old), 'turn: an old axis-aligned building can be turned');
+  valid('map with a converted building');
+  ok(ED.moveBuilding(m, id, -36, 3) === true && ED.hitTest(m, -36, 3).id === id, 'turn: a building can be moved');
+  valid('map after moving a building');
+  ok(ED.removeById(m, id) === true && !m.pads.some(p => p.id === id) && !m.scenery.some(q => q.of === id), 'turn: removing it removes pad and awning');
+}
+
+// 7. engine E3: curved roads
+{
+  const mk = type => { const m = ED.newMapFrom(fresh()); m.roads.edges.push(type === 'line'
+    ? { key: 'r', type: 'line', a: [-40, -30], b: [40, -30], profile: [[0, 0], [30, 2], [80, 0]] }
+    : { key: 'r', type: 'curve', pts: [[-40, -30], [40, -30]], profile: [[0, 0], [30, 2], [80, 0]] }); return m; };
+  const WL = createWorld(mk('line')), WC = createWorld(mk('curve'));
+  let worst = 0, kindDiff = 0;
+  for (let i = 0; i < 400; i++) { const x = -45 + (i * 37 % 90), z = -36 + (i * 11 % 12) * 1.0; const a = WL.column(x, z, 0.3), b = WC.column(x, z, 0.3); worst = Math.max(worst, Math.abs(a.h - b.h)); if (a.kind !== b.kind) kindDiff++; }
+  ok(worst < 1e-9 && kindDiff === 0, `curve: a two-point curve is the same road as a straight line (max height difference ${worst.toExponential(1)}, ${kindDiff} surface differences)`);
+  const m = ED.newMapFrom(fresh());
+  const idx = ED.addCurve(m, [[-38, -36], [-15, -44], [10, -38], [38, -45]], 0, 3);
+  ok(typeof idx === 'number' && m.roads.edges[idx].type === 'curve', 'curve: a curved road is added');
+  ok(validateMap(m).ok, 'curve: the map with a curved road is valid');
+  const W = createWorld(m), len = W.edgeLen(idx), chord = Math.hypot(76, 10);
+  ok(len > chord + 1, `curve: it is longer than the straight chord (${len.toFixed(1)} m against ${chord.toFixed(1)} m)`);
+  let onRoad = 0, far = 0;
+  for (let t = 2; t < len - 2; t += 3) { const p = W.edgePoint(idx, t, 0), q = W.edgePoint(idx, t, 6); if (W.column(p.x, p.z, 0.3).tarmac >= 1) onRoad++; if (W.column(q.x, q.z, 0.3).tarmac === 0 || Math.abs(W.loopInfo(q.x, q.z).u) <= 4) far++; }
+  const total = Math.floor((len - 4) / 3) + 1;
+  ok(onRoad >= total - 1 && far >= total - 1, `curve: the road surface follows the curve (${onRoad}/${total} centre points on tarmac, ${far}/${total} points 6 m aside off it)`);
+  const pe = W.edgePoint(idx, len / 2, 0), c = W.column(pe.x, pe.z, 0.3);
+  ok(Math.abs(c.h - W.edgeH(idx, len / 2)) < 0.05, 'curve: the ground height on the road matches the road profile');
+  { const mj = ED.newMapFrom(fresh()); ED.addCurve(mj, [[0, -20], [4, -34], [0, -46]], 0, 0); ok(mj.roads.junctions.length >= 1 && validateMap(mj).ok, `curve: crossing the oval makes a junction (${mj.roads.junctions.length})`); }
+  const e = m.roads.edges[idx], L0 = W.edgeLen(idx);
+  ok(ED.moveCurvePoint(m, idx, 1, -15, -40) === true && Math.abs(e.profile.at(-1)[0] - createWorld(m).edgeLen(idx)) < 1e-9 && validateMap(m).ok, 'curve: moving a point stretches the height profile to the new length');
+  const ai = ED.addCurvePoint(m, idx, 0, -39); ok(typeof ai === 'number' && e.pts.length === 5 && validateMap(m).ok, 'curve: a point is inserted along the road');
+  ok(ED.removeCurvePoint(m, idx, ai) === true && e.pts.length === 4 && validateMap(m).ok, 'curve: a point is removed');
+  const W2 = createWorld(m), hp = W2.edgePoint(idx, W2.edgeLen(idx) / 3, 0);
+  ok(ED.hitTest(m, hp.x, hp.z).kind === 'road', 'curve: a click on a curved road finds it');
+  const bad = JSON.parse(JSON.stringify(m)); bad.roads.edges[idx].profile.at(-1)[0] = 5;
+  ok(!validateMap(bad).ok, 'curve: a profile that does not end at the road length is refused');
+  const bad2 = JSON.parse(JSON.stringify(m)); bad2.roads.edges[idx].pts = [[0, 0]];
+  ok(!validateMap(bad2).ok, 'curve: a one-point curve is refused');
+  ok(ED.removeRoad(m, idx) === true && m.roads.edges.length === 1, 'curve: a curved road is removed');
+}
+
+// 8. editor E6: rows of buildings, copies, drop-in start
+{
+  const m = ED.newMapFrom(fresh()); ED.setSlab(m, -120, 120, -140, 60);
+  const ar = ED.addRoad(m, [-60, -90], [60, -90], 0, 0); ok(typeof ar === 'number', 'frontage: a test road is added');
+  const ei = m.roads.edges.length - 1, before = m.scenery.length;
+  const n = ED.frontage(m, { edge: ei, side: 1, style: { w: 8, d: 6, h: 7, wall: '#E6D5AE', trim: '#8A6D4B' }, setback: 3, gap: 1 });
+  ok(typeof n === 'number' && n >= 8, `frontage: a row of buildings is placed along a road (${n})`);
+  const valid = label => { const r = validateMap(m); ok(r.ok, 'frontage: ' + label + (r.ok ? '' : ': ' + describeErrors(r, 4))); return r.ok; };
+  valid('map after a row of buildings');
+  const bs = m.scenery.filter(q => q.t === 'bldgY');
+  const W = createWorld(m);
+  const gaps = bs.every(q => { const r = ED.setbackOf(m, q.id); return r && Math.abs(r.dist - 3) < 0.6; });
+  ok(gaps, 'frontage: every building keeps the 3 m space from the road edge');
+  const clear = bs.every(q => { const lines = ED.polylines(m); return !ED.nearestRoad(m, q.cx, q.cz, m.roads.pavement - 0.5, lines); });
+  ok(clear, 'frontage: no building stands on the road');
+  const again = ED.frontage(m, { edge: ei, side: 1, style: { w: 8, d: 6, h: 7 }, setback: 3, gap: 1 });
+  ok(again === 0 && m.scenery.filter(q => q.t === 'bldgY').length === bs.length, 'frontage: a second row on the same spots adds nothing');
+  const c = ED.duplicateItem(m, bs[0].id, 10, -60);
+  const cb = ED.getItem(m, c);
+  ok(typeof c === 'string' && cb && cb.w === bs[0].w && cb.yaw === bs[0].yaw && c !== bs[0].id, 'copy: a building is copied with its size and turn');
+  valid('map after a copy');
+  const t = ED.addTree(m, 5, -50), tc = ED.duplicateItem(m, t, 9, -50);
+  ok(ED.getItem(m, tc) && ED.getItem(m, tc).t === 'tree', 'copy: a tree is copied');
+  const sg = ED.addSignal(m, 0, -70, 0, 'light'), sc = ED.duplicateItem(m, sg, 4, -70);
+  ok(ED.getItem(m, sc) && m.features.signals.length === 2, 'copy: a signal is copied');
+  const dp = ED.dropPoint(m, 0, -90.4);
+  ok(Math.abs(dp.z + 90) < 1 && Number.isFinite(dp.psi), 'drop: a point near a road lands on the road');
+  const dq = ED.dropPoint(m, 30, -70);
+  ok(dq.x === 30 && dq.z === -70, 'drop: a point away from roads stays where it was clicked');
+  const m2 = ED.clone(m); ED.setStart(m2, dp.x, dp.z, dp.psi); ok(validateMap(m2).ok && m.start.x !== m2.start.x, 'drop: the test copy has the new start and the map is untouched');
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nAll fast checks passed');
 process.exit(failed ? 1 : 0);

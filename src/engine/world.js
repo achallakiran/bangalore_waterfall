@@ -11,17 +11,20 @@ function hash3(i, j, k, s) {
 }
 
 // Surface kinds (fixed by the engine, not by maps)
-const K = { GRASS: 0, ROAD: 1, EDGE: 2, DASH: 3, ZEBRA: 4, KERB: 5, WATER: 6, SAND: 7, CHKD: 8, CHKW: 9, PIT: 10, RIM: 11, SCRUB: 12, LATER: 13, ROCK: 14, ROCK2: 15, SOIL: 16, WALL: 17, PITWALL: 18 };
+const K = { GRASS: 0, ROAD: 1, EDGE: 2, DASH: 3, ZEBRA: 4, KERB: 5, WATER: 6, SAND: 7, CHKD: 8, CHKW: 9, PIT: 10, RIM: 11, SCRUB: 12, LATER: 13, ROCK: 14, ROCK2: 15, SOIL: 16, WALL: 17, PITWALL: 18, PAVER: 19 };
 const COLS = [];
 COLS[K.GRASS] = [0x6FBF4A, 0.1]; COLS[K.ROAD] = [0x4B5159, 0.04]; COLS[K.EDGE] = [0xE9EDEF, 0]; COLS[K.DASH] = [0xF3E9B5, 0];
 COLS[K.ZEBRA] = [0xF4F1EA, 0]; COLS[K.KERB] = [0xC7C2B6, 0.05]; COLS[K.WATER] = [0x4FA3D1, 0.06]; COLS[K.SAND] = [0xE6D6A2, 0.06];
 COLS[K.CHKD] = [0x23252B, 0]; COLS[K.CHKW] = [0xF4F1EA, 0]; COLS[K.PIT] = [0x1F1B18, 0.1]; COLS[K.RIM] = [0x7E8288, 0.08];
 COLS[K.SCRUB] = [0xC9B27A, 0.08]; COLS[K.LATER] = [0xB5694A, 0.08]; COLS[K.ROCK] = [0x8E959B, 0.07]; COLS[K.ROCK2] = [0x717880, 0.08];
-COLS[K.SOIL] = [0x7B5A3C, 0.08]; COLS[K.WALL] = [0x9A9187, 0.06]; COLS[K.PITWALL] = [0x3A3029, 0.08];
+COLS[K.PAVER] = [0xBDB6A6, 0.05]; COLS[K.SOIL] = [0x7B5A3C, 0.08]; COLS[K.WALL] = [0x9A9187, 0.06]; COLS[K.PITWALL] = [0x3A3029, 0.08];
 const MULT = [];   // speed multiplier per surface
 MULT[K.GRASS] = 0.5; MULT[K.ROAD] = 1; MULT[K.EDGE] = 1; MULT[K.DASH] = 1; MULT[K.ZEBRA] = 1; MULT[K.KERB] = 0.85; MULT[K.WATER] = 0.3; MULT[K.SAND] = 0.45;
 MULT[K.CHKD] = 1; MULT[K.CHKW] = 1; MULT[K.PIT] = 1; MULT[K.RIM] = 1; MULT[K.SCRUB] = 0.55; MULT[K.LATER] = 0.5; MULT[K.ROCK] = 0.6; MULT[K.ROCK2] = 0.55;
-MULT[K.SOIL] = 0.5; MULT[K.WALL] = 0.5; MULT[K.PITWALL] = 0.5;
+MULT[K.PAVER] = 0.85; MULT[K.SOIL] = 0.5; MULT[K.WALL] = 0.5; MULT[K.PITWALL] = 0.5;
+// Surfaces the map editor can paint onto open ground (order = the code stored in the map's paint layer).
+export const PAINT_KINDS = ['grass', 'sand', 'scrub', 'later', 'rock', 'rock2', 'soil', 'paver'];
+const PAINT_K = [K.GRASS, K.SAND, K.SCRUB, K.LATER, K.ROCK, K.ROCK2, K.SOIL, K.PAVER];
 const DEEP = []; DEEP[K.ROCK] = K.ROCK2; DEEP[K.ROCK2] = K.ROCK2; DEEP[K.SCRUB] = K.LATER; DEEP[K.LATER] = K.LATER; DEEP[K.SAND] = K.SAND;
 
 // ---- Smooth height profiles (monotone cubic, so grades follow the control points) ----
@@ -41,6 +44,7 @@ function pchip(pts) {
   };
 }
 
+import { sampleCurve, prepareCurve, nearCurve, curvePoint } from './curve.js';
 const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 export function createWorld(map) {
@@ -79,8 +83,11 @@ export function createWorld(map) {
   }
 
   // ---- Cross roads (straight pieces with their own height profiles) ----
-  const LINES = RD.edges.slice(1).map(e => ({ key: e.key, ax: e.a[0], az: e.a[1], bx: e.b[0], bz: e.b[1], pts: e.profile }));
+  const LINES = RD.edges.slice(1).map(e => e.type === 'curve'
+    ? { key: e.key, ax: e.pts[0][0], az: e.pts[0][1], bx: e.pts[e.pts.length - 1][0], bz: e.pts[e.pts.length - 1][1], pts: e.profile, curve: prepareCurve(sampleCurve(e.pts)) }
+    : { key: e.key, ax: e.a[0], az: e.a[1], bx: e.b[0], bz: e.b[1], pts: e.profile });
   LINES.forEach(e => {
+    if (e.curve) { e.len = e.curve.len; e.f = pchip(e.pts); return; }
     const dx = e.bx - e.ax, dz = e.bz - e.az, len = Math.hypot(dx, dz);
     e.len = len; e.dx = dx / len; e.dz = dz / len; e.nx = -e.dz; e.nz = e.dx; e.f = pchip(e.pts);
   });
@@ -90,18 +97,41 @@ export function createWorld(map) {
   function edgePoint(ei, t, u) {
     if (ei === 0) return trackPoint(t, u);
     const e = LINES[ei - 1];
+    if (e.curve) return curvePoint(e.curve, t, u);
     return { x: e.ax + e.dx * t + e.nx * u, z: e.az + e.dz * t + e.nz * u, psi: Math.atan2(-e.dz, e.dx) };
   }
   // Named heights that scenery can refer to (pads), plus the three profile heights the old code derived.
   const S_EAST = 2 * L + Math.PI * R / 2, S_WEST = 4 * L + Math.PI * R + Math.PI * R / 2, S_FAR0 = 2 * L + Math.PI * R + L;
 
   // Flat pads under the buildings
-  const FLATS = map.pads.map(p => ({ id: p.id, x0: p.x0, x1: p.x1, z0: p.z0, z1: p.z1, h: p.h, m: p.m }));
+  const FLATS = map.pads.map(p => ({ id: p.id, x0: p.x0, x1: p.x1, z0: p.z0, z1: p.z1, h: p.h, m: p.m, yaw: p.yaw || 0, c: Math.cos((p.yaw || 0) * Math.PI / 180), s: Math.sin((p.yaw || 0) * Math.PI / 180) }));
+  // A turned pad is the same box turned about its centre; the point is moved into the box's own frame first. Yaw 0 keeps the old arithmetic.
+  function padFrame(r, x, z) {
+    if (!r.yaw) return [x, z];
+    const cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2, dx = x - cx, dz = z - cz;
+    return [cx + dx * r.c - dz * r.s, cz + dx * r.s + dz * r.c];
+  }
   function inFlat(x, z, margin) {
-    for (const r of FLATS) if (x > r.x0 - margin && x < r.x1 + margin && z > r.z0 - margin && z < r.z1 + margin) return true;
+    for (const r of FLATS) {
+      const q = padFrame(r, x, z);
+      if (q[0] > r.x0 - margin && q[0] < r.x1 + margin && q[1] > r.z0 - margin && q[1] < r.z1 + margin) return true;
+    }
     return false;
   }
   const pad = id => FLATS.find(p => p.id === id);
+
+  // ---- Ground layers (optional, from the editor): hand-sculpted height on a 1 m lattice and hand-painted surface on a 0.5 m lattice ----
+  // Sparse and keyed by lattice cell, so an untouched map pays nothing and a stream chunk only meets the cells it covers.
+  const LY = map.layers || null;
+  const lkey = (i, j) => (i + 20000) * 40001 + (j + 20000);
+  let SC = null, PN = null;
+  if (LY && LY.sculpt && LY.sculpt.cells.length) { SC = new Map(); LY.sculpt.cells.forEach(c => SC.set(lkey(c[0], c[1]), c[2] / 100)); }
+  if (LY && LY.paint && LY.paint.cells.length) { PN = new Map(); LY.paint.cells.forEach(c => PN.set(lkey(c[0], c[1]), PAINT_K[c[2]])); }
+  function sculptAt(x, z) {
+    const fx = Math.floor(x), fz = Math.floor(z), tx = x - fx, tz = z - fz;
+    const a = SC.get(lkey(fx, fz)) || 0, b = SC.get(lkey(fx + 1, fz)) || 0, c = SC.get(lkey(fx, fz + 1)) || 0, d = SC.get(lkey(fx + 1, fz + 1)) || 0;
+    return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+  }
 
   // ---- Noise and biomes ----
   function vn(x, z, sc, sd) {
@@ -125,6 +155,7 @@ export function createWorld(map) {
   function tarmacCount(x, z) {
     let n = Math.abs(loopInfo(x, z).u) <= HW + 1.2 ? 1 : 0;
     for (const e of LINES) {
+      if (e.curve) { if (nearCurve(e.curve, x, z).d <= HW + 1.2) n++; continue; }
       const px = x - e.ax, pz = z - e.az, t = clamp(px * e.dx + pz * e.dz, 0, e.len);
       if (Math.hypot(px - e.dx * t, pz - e.dz * t) <= HW + 1.2) n++;
     }
@@ -154,8 +185,14 @@ export function createWorld(map) {
     let bd = Math.abs(li.u), bu = li.u, bt = li.s, bE = 0, nT = bd <= HW ? 1 : 0;
     ds[0] = bd; hs[0] = loopF(((li.s % LTOT) + LTOT) % LTOT);
     for (let i = 0; i < LINES.length; i++) {
-      const e = LINES[i], px = x - e.ax, pz = z - e.az, t = clamp(px * e.dx + pz * e.dz, 0, e.len);
-      const cx = px - e.dx * t, cz = pz - e.dz * t, d = Math.hypot(cx, cz), side = px * e.nx + pz * e.nz;
+      const e = LINES[i];
+      let t, d, side;
+      if (e.curve) { const q = nearCurve(e.curve, x, z); t = q.t; d = q.d; side = q.side; }
+      else {
+        const px = x - e.ax, pz = z - e.az;
+        t = clamp(px * e.dx + pz * e.dz, 0, e.len);
+        const cx = px - e.dx * t, cz = pz - e.dz * t; d = Math.hypot(cx, cz); side = px * e.nx + pz * e.nz;
+      }
       ds[i + 1] = d; hs[i + 1] = e.f(t);
       if (d <= HW) nT++;
       if (d < bd) { bd = d; bu = side < 0 ? -d : d; bt = t; bE = i + 1; }
@@ -200,8 +237,10 @@ export function createWorld(map) {
     H += bio.rock * (HR.rock[0] + HR.rock[1] * ridge + HR.rock[2] * n3);
     H += bio.scrub * HR.scrub * (n1 - 0.5) * 2;
     H -= bio.lake * HR.lake;
+    if (SC) H += sculptAt(x, z);
     for (let i = 0; i < FLATS.length; i++) {
-      const r = FLATS[i], dx = Math.max(r.x0 - x, 0, x - r.x1), dz = Math.max(r.z0 - z, 0, z - r.z1);
+      const r = FLATS[i], q = r.yaw ? padFrame(r, x, z) : null, qx = q ? q[0] : x, qz = q ? q[1] : z;
+      const dx = Math.max(r.x0 - qx, 0, qx - r.x1), dz = Math.max(r.z0 - qz, 0, qz - r.z1);
       H = lerp(H, r.h, 1 - sstep(0, r.m, Math.hypot(dx, dz)));
     }
     H = lerp(roadH, H, sstep(PAV, PAV + T.blend, bd));
@@ -212,6 +251,7 @@ export function createWorld(map) {
     else if (inLake && H < WATER + 0.5) kind = K.SAND;
     else if (bio.rock > T.rockMin) kind = n3 > T.rock2At ? K.ROCK2 : K.ROCK;
     else if (bio.scrub > T.scrubMin) kind = n3 > T.laterAt ? K.LATER : K.SCRUB;
+    if (PN && kind !== K.WATER) { const pk = PN.get(lkey(Math.floor(x * 2), Math.floor(z * 2))); if (pk !== undefined) kind = pk; }
     out.h = H; out.kind = kind; out.wall = bd < PAV + 5 ? 1 : 0;
     return out;
   }

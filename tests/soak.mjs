@@ -51,7 +51,13 @@ const ed = [];
 for (let i = 1; i <= 4; i++) {
   await page.evaluate(() => window.__v2.show('scTitle'));
   await page.click('#mEditor');
-  await page.waitForFunction(() => window.__v2.editor && document.querySelectorAll('#scEditor canvas').length === 1);
+  await page.waitForFunction(() => window.__v2.editor && window.__v2.editor.view3d && window.__v2.editor.view3d.stats().cubes > 1000, null, { timeout: 120000 });
+  if (i % 2 === 0) { // flat mode must give the 3D view's graphics memory back; 3D again must rebuild it
+    await page.evaluate(() => window.__v2.editor.setMode('flat'));
+    ok(await page.evaluate(() => window.__v2.editor.view3d === null && document.querySelectorAll('#scEditor canvas').length === 1), `editor cycle ${i}: the flat view holds no 3D canvas`);
+    await page.evaluate(() => window.__v2.editor.setMode('3d'));
+    await page.waitForFunction(() => window.__v2.editor.view3d && window.__v2.editor.view3d.stats().cubes > 1000, null, { timeout: 120000 });
+  }
   await page.waitForTimeout(250);
   await page.evaluate(() => { const e = window.__v2.editor; e.state.dirty = false; });
   await page.click('.ed-top button:has-text("Exit editor")');
