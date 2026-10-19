@@ -1,0 +1,23 @@
+name: Screenshot and drive parity (manual)
+on:
+  workflow_dispatch:
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run build
+      - run: npm run test:parity
+      - run: npm run test:soak
+      - run: npm run test:shell
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-output
+          path: tests/output

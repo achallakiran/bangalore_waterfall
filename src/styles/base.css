@@ -1,0 +1,69 @@
+/* Tokens, reset and shared controls. Values are carried over unchanged from the Style Gallery / Loop Track pages. */
+:root {
+  --bg: #E8EFF1;
+  --panel: #F7FAFB;
+  --ink: #13232A;
+  --muted: #52676E;
+  --line: #C5D3D8;
+  --accent: #F2A900;
+  --on-accent: #1C1600;
+  --accent-soft: #FBE8B0;
+  --sky-top: #B9DDF1;
+  --sky-bot: #F0F5EA;
+  --font-ui: "Bricolage Grotesque Variable", "Bricolage Grotesque", "Trebuchet MS", system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0D171C; --panel: #15232A; --ink: #E6EFF2; --muted: #A3B7BE; --line: #27393F;
+    --accent: #F6B93B; --on-accent: #1C1600; --accent-soft: #3B3010;
+    --sky-top: #10242E; --sky-bot: #2B4750;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0D171C; --panel: #15232A; --ink: #E6EFF2; --muted: #A3B7BE; --line: #27393F;
+  --accent: #F6B93B; --on-accent: #1C1600; --accent-soft: #3B3010;
+  --sky-top: #10242E; --sky-bot: #2B4750;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.45;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.chip, .btn {
+  flex: none;
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.btn:disabled { border-style: dashed; color: var(--muted); cursor: default; background: transparent; }
+
+.field { display: grid; gap: 4px; min-width: 0; }
+.field .row { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13px; }
+.field output { font-family: var(--font-mono); font-weight: 400; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.field input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; }
+kbd { font-family: var(--font-mono); font-size: 11px; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--bg); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }

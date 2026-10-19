@@ -1,0 +1,28 @@
+[
+ {
+  "voxel": 0.2,
+  "lapLength": 150.248,
+  "potholes": 32,
+  "potholeHash": 509170821,
+  "samples": 5695,
+  "heightHash": 4280389170,
+  "kindHash": 417476358,
+  "chunks": 42,
+  "cubes": 181514,
+  "posHash": 750068920,
+  "colHash": 55496124
+ },
+ {
+  "voxel": 0.25,
+  "lapLength": 150.248,
+  "potholes": 32,
+  "potholeHash": 509170821,
+  "samples": 5695,
+  "heightHash": 4280389170,
+  "kindHash": 417476358,
+  "chunks": 42,
+  "cubes": 115910,
+  "posHash": 3445550575,
+  "colHash": 612879323
+ }
+]
