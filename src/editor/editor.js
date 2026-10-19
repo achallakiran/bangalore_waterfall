@@ -1,6 +1,8 @@
 // Map editor screen (Phase 4). Loaded only when the editor is opened, and everything it holds is released when it closes.
 // A top-down canvas over a shaded picture of the real ground (made by the same world maths as the game), with tools on the side.
 import '../styles/editor.css';
+import '../styles/editor2.css';
+import * as Store from './store.js';
 import { createWorld } from '../engine/world.js';
 import { validateMap, describeErrors } from '../maps/format.js';
 import { parseMap, MapError } from '../maps/manager.js';
@@ -11,7 +13,7 @@ import { SECTIONS, BASIC, BUILDINGS, TREES, renderPieces, artUrl } from './tray.
 
 const BLOB_NAMES = { hills: 'Hill', rock: 'Rock', scrub: 'Scrub', lake: 'Lake' };
 const SPAWN_NAMES = { pedestrian: 'People', cow: 'Cows', buffalo: 'Buffalo', goat: 'Goats', dog: 'Dogs', vehicle: 'Vehicles' };
-const DRAFT_KEY = 'hl2.editor.draft.v1';
+const DRAFT_KEY = 'hl2.editor2.draft.v1', CLASSIC_DRAFT_KEY = 'hl2.editor.draft.v1';
 
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -25,6 +27,8 @@ const slug = s => (s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/
 // state = { map, undo: [json], redo: [json], view: {cx, cz, s}, dirty } can be passed back in to resume after a play-test.
 export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   const st = state || { map: ED.newMapFrom(base, { id: 'my-map', name: 'My map' }), undo: [], redo: [], view: null, dirty: false };
+  if (!st.undoL) st.undoL = []; if (!st.redoL) st.redoL = []; while (st.undoL.length < st.undo.length) st.undoL.unshift('change'); while (st.redoL.length < st.redo.length) st.redoL.unshift('change');
+  if (st.slotId === undefined) st.slotId = null;
   ED.ensureFeatures(st.map);
   const toast = (m) => onToast && onToast(m);
   let mode = '3d', v3 = null, ovT = 0, hoverRaf = 0, lastPtr = null;
@@ -52,7 +56,13 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   const nav = el('div', { class: 'ed-nav', role: 'toolbar', 'aria-label': 'View' });
   const navBtn = (label, title, fn) => { const b = el('button', { class: 'ed-navbtn', type: 'button', title, 'aria-label': title, text: label }); b.addEventListener('click', fn); nav.append(b); return b; };
   const compass = el('button', { class: 'ed-compass', type: 'button', title: 'North up', 'aria-label': 'Compass: click to face north' }, el('span', { text: 'N' }));
-  const stage = el('div', { class: 'ed-stage' }, cv, nav, status);
+  // floating Undo / Redo / Maps: always on the map, big enough for a finger
+  const fabBtn = (icon, word) => { const lab = el('small', { text: '' }); const b = el('button', { class: 'e2-fabbtn', type: 'button' }, el('span', { class: 'e2-ico', text: icon }), el('span', { class: 'e2-word', text: word }), lab); return [b, lab]; };
+  const [fabUndo, fabUndoL] = fabBtn('\u21B6', 'Undo'), [fabRedo, fabRedoL] = fabBtn('\u21B7', 'Redo'), [fabMaps] = fabBtn('\u25A4', 'Maps');
+  fabUndo.dataset.act = 'undo'; fabRedo.dataset.act = 'redo'; fabMaps.dataset.act = 'maps';
+  const savedTag = el('span', { class: 'e2-saved', 'aria-live': 'polite' });
+  const fab = el('div', { class: 'e2-fab', role: 'toolbar', 'aria-label': 'Undo, redo and maps' }, fabUndo, fabRedo, fabMaps, savedTag);
+  const stage = el('div', { class: 'ed-stage' }, cv, nav, status, fab);
   root.replaceChildren(top, el('div', { class: 'ed-body' }, stage, side), file);
 
   // ---------- the picture tray ----------
@@ -76,12 +86,20 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
 
   // ---------- state and history ----------
   const snap = () => JSON.stringify(st.map);
-  function commit(fn, groundChanged = true, box = null) {
-    const before = snap();
+  // growPts: points the next edit will touch. The ground grows (in 12 m steps, 24 m margin) to take them in, as part of the same undo step.
+  let growPts = null;
+  const slabKey = () => { const q = st.map.slab; return q.x0 + ',' + q.x1 + ',' + q.z0 + ',' + q.z1; };
+  const labelNow = () => (tile && tool !== 'select' && tool !== 'pan' ? tile.label : 'change');
+  function pushUndo(before, label) { st.undo.push(before); st.undoL.push(label); if (st.undo.length > 80) { st.undo.shift(); st.undoL.shift(); } st.redo.length = 0; st.redoL.length = 0; }
+  function commit(fn, groundChanged = true, box = null, label = null) {
+    const before = snap(), k0 = slabKey(), gp = growPts; growPts = null;
+    if (gp && gp.length) { const g = ED.growSlab(st.map, gp); if (typeof g === 'string') { st.map = JSON.parse(before); toast(g.slice(1)); return false; } }
     const res = fn(st.map);
     if (typeof res === 'string' && res.startsWith('!')) { st.map = JSON.parse(before); toast(res.slice(1)); return false; }
-    st.undo.push(before); if (st.undo.length > 80) st.undo.shift();
-    st.redo.length = 0; st.dirty = true;
+    const grew = slabKey() !== k0;
+    if (grew) { groundChanged = true; box = null; const q = st.map.slab; toast('The map grew to ' + (q.x1 - q.x0) + ' by ' + (q.z1 - q.z0) + ' m.'); }
+    pushUndo(before, label || labelNow());
+    st.dirty = true;
     after(groundChanged, box);
     return res === undefined ? true : res;
   }
@@ -93,9 +111,32 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     draw();
     clearTimeout(saveT); saveT = setTimeout(autosave, 800);
   }
-  function undo() { if (!st.undo.length) return; st.redo.push(snap()); st.map = JSON.parse(st.undo.pop()); selected = null; st.dirty = true; after(true); }
-  function redo() { if (!st.redo.length) return; st.undo.push(snap()); st.map = JSON.parse(st.redo.pop()); selected = null; st.dirty = true; after(true); }
-  function autosave() { try { localStorage.setItem(DRAFT_KEY, snap()); } catch (e) {} }
+  function undo() { if (!st.undo.length) return; const lab = st.undoL.pop(); st.redo.push(snap()); st.redoL.push(lab); st.map = JSON.parse(st.undo.pop()); selected = null; st.dirty = true; after(true); toast('Undid: ' + lab); }
+  function redo() { if (!st.redo.length) return; const lab = st.redoL.pop(); st.undo.push(snap()); st.undoL.push(lab); st.map = JSON.parse(st.redo.pop()); selected = null; st.dirty = true; after(true); toast('Redid: ' + lab); }
+  // ---- saving: into this map's slot (IndexedDB); a plain local draft is the fallback when slots are not available ----
+  let thumbAt = 0, slotsOk = Store.available(), saving = Promise.resolve();
+  function thumbNow(force) {
+    if (!force && Date.now() - thumbAt < 30000) return undefined;
+    try {
+      if (dirtyGround || !ground) buildGround();
+      if (!ground) return undefined;
+      const c = document.createElement('canvas'); c.width = 160; c.height = 120; const g = c.getContext('2d');
+      const S = st.map.slab, k = Math.min(160 / (S.x1 - S.x0), 120 / (S.z1 - S.z0)), w = (S.x1 - S.x0) * k, h = (S.z1 - S.z0) * k;
+      g.fillStyle = '#9db7a8'; g.fillRect(0, 0, 160, 120); g.drawImage(ground, (160 - w) / 2, (120 - h) / 2, w, h);
+      thumbAt = Date.now(); return c.toDataURL('image/jpeg', 0.7);
+    } catch (e) { return undefined; }
+  }
+  function autosave(force) {
+    if (!slotsOk) { try { localStorage.setItem(DRAFT_KEY, snap()); } catch (e) {} return Promise.resolve(); }
+    if (!st.slotId) { if (!st.dirty && !force) return Promise.resolve(); st.slotId = Store.newId(); }
+    const id = st.slotId, map = JSON.parse(snap()), info = { name: st.map.meta.name, cam: st.cam3 || null };
+    const th = thumbNow(force); if (th !== undefined) info.thumb = th;
+    saving = saving.then(() => Store.saveSlot(id, map, info)).then(() => { savedAt = Date.now(); showSaved(); }).catch(e => { console.warn('slot save failed', e); slotsOk = false; try { localStorage.setItem(DRAFT_KEY, JSON.stringify(map)); } catch (e2) {} toast('Could not save to this device. Use Save file to keep a copy.'); });
+    return saving;
+  }
+  let savedAt = 0, savedTagT = 0;
+  function showSaved() { savedTag.textContent = 'Saved'; clearTimeout(savedTagT); savedTagT = setTimeout(() => { savedTag.textContent = ''; }, 2500); }
+  const flush = () => ((st.dirty || st.slotId) && slotsOk ? autosave(st.dirty) : Promise.resolve());
   function check() {
     const r = validateMap(st.map);
     errors = r.ok ? [] : r.errors;
@@ -317,11 +358,12 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     if (kind === 'click') {
       switch (tool) {
         case 'select': { selected = pickAny(e); refreshUi(); draw(); break; }
-        case 'terrain': commit(() => ED.addBlob(m, opts.blob, x, z, opts.blobSize, opts.blobSize, 1), true, spanBox(x, z, opts.blobSize * 3)); break;
-        case 'tree': { const t = TREES[opts.tree] || TREES.small, j = Math.abs(Math.round(x * 7 + z * 3)) % 9; commit(() => ED.addTree(m, x, z, t.h + j * 0.1, t.r + (Math.abs(Math.round(x + z * 5)) % 7) * 0.08), false); break; }
-        case 'lamp': commit(() => ED.addLamp(m, x, z, Number(opts.lampE)), false); break;
+        case 'terrain': growPts = [[x, z]]; commit(() => ED.addBlob(m, opts.blob, x, z, opts.blobSize, opts.blobSize, 1), true, spanBox(x, z, opts.blobSize * 3)); break;
+        case 'tree': { growPts = [[x, z]]; const t = TREES[opts.tree] || TREES.small, j = Math.abs(Math.round(x * 7 + z * 3)) % 9; commit(() => ED.addTree(m, x, z, t.h + j * 0.1, t.r + (Math.abs(Math.round(x + z * 5)) % 7) * 0.08), false); break; }
+        case 'lamp': growPts = [[x, z]]; commit(() => ED.addLamp(m, x, z, Number(opts.lampE)), false); break;
         case 'building': {
           const o = buildingPlan(x, z), big = Math.max(o.w, o.depth) / 2 + 6;
+          growPts = [[o.cx - big, o.cz - big], [o.cx + big, o.cz + big]];
           const r = commit(() => ED.addBuildingY(m, o), true, spanBox(o.cx, o.cz, big));
           if (typeof r === 'string') { selected = { kind: o.shop ? 'shop' : 'building', id: r }; refreshUi(); }
           break;
@@ -358,13 +400,16 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
       if (tool === 'road' && !opts.curve) {
         const sa = drag.sa, sb = snapPt(b[0], b[1], true);
         const h0 = opts.h0 === '' ? roadHeightAt(sa) : Number(opts.h0), h1 = opts.h1 === '' ? roadHeightAt(sb) : Number(opts.h1);
+        growPts = [[sa.x, sa.z], [sb.x, sb.z]];
         const r = commit(() => ED.addRoad(m, [sa.x, sa.z], [sb.x, sb.z], h0, h1));
         if (r !== false) { selected = { kind: 'road', edge: m.roads.edges.length - 1 }; refreshUi(); }
       } else if (tool === 'building') {
         const cx = (a[0] + b[0]) / 2, cz = (a[1] + b[1]) / 2, o = buildingPlan(cx, cz, Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
+        growPts = [a, b];
         const r = commit(() => ED.addBuildingY(m, o), true, spanBox(cx, cz, Math.max(o.w, o.depth) / 2 + 6));
         if (typeof r === 'string') { selected = { kind: o.shop ? 'shop' : 'building', id: r }; refreshUi(); }
       } else if (tool === 'spawn') {
+        growPts = [a, b];
         commit(() => ED.addSpawnArea(m, opts.spawn, a[0], a[1], b[0], b[1], numOpt('spawnN', 3)), false);
       }
     }
@@ -383,14 +428,15 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     if (curvePts.length < 2) { toast('A curved road needs at least two points.'); return; }
     const pts = curvePts.slice(), w = WW();
     const h0 = opts.h0 === '' ? Math.max(0, w.column(pts[0][0], pts[0][1], 0.25).h) : Number(opts.h0), h1 = opts.h1 === '' ? Math.max(0, w.column(pts[pts.length - 1][0], pts[pts.length - 1][1], 0.25).h) : Number(opts.h1);
-    curvePts = [];
+    curvePts = []; growPts = pts;
     const r = commit(() => ED.addCurve(st.map, pts, h0, h1));
     if (r !== false) { selected = { kind: 'road', edge: st.map.roads.edges.length - 1 }; }
     buildOpts(); refreshUi(); draw();
   }
 
   // ---------- live edits (drags): applied to the map as you move, one undo step when you let go ----------
-  function liveApply(fn, box) {
+  function liveApply(fn, box, at) {
+    if (at) { const k0 = slabKey(), g = ED.growSlab(st.map, [at]); if (typeof g === 'string') return g; if (slabKey() !== k0) box = null; }
     const r = fn(st.map);
     if (typeof r === 'string' && r.startsWith('!')) return r;
     st.dirty = true; lines = null; dirtyGround = true;
@@ -399,7 +445,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   }
   function endLive(before, groundBox) {
     if (snap() === before) return false;
-    st.undo.push(before); if (st.undo.length > 80) st.undo.shift(); st.redo.length = 0; st.dirty = true;
+    pushUndo(before, labelNow()); st.dirty = true;
     check(); refreshUi(); draw();
     clearTimeout(saveT); saveT = setTimeout(autosave, 800);
     return true;
@@ -407,9 +453,9 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   // brush stamps
   function stamp(x, z, s) {
     const r = clamp(numOpt('brushD', 8), 2, 40) / 2, box = spanBox(x, z, r + 3);
-    if (tool === 'paint') return liveApply(m => ED.paintBrush(m, x, z, r, opts.paint), box);
-    if (opts.brush === 'grade') return liveApply(m => ED.gradeTo(m, x, z, r * 0.7, s.level, r * 0.3 + 1), box);
-    return liveApply(m => ED.sculptBrush(m, x, z, r, numOpt('brushS', 0.4), opts.brush), box);
+    if (tool === 'paint') return liveApply(m => ED.paintBrush(m, x, z, r, opts.paint), box, [x, z]);
+    if (opts.brush === 'grade') return liveApply(m => ED.gradeTo(m, x, z, r * 0.7, s.level, r * 0.3 + 1), box, [x, z]);
+    return liveApply(m => ED.sculptBrush(m, x, z, r, numOpt('brushS', 0.4), opts.brush), box, [x, z]);
   }
 
   // ---------- 3D: things you can click, and what is drawn over the scene ----------
@@ -719,6 +765,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   function pasteAt(x, z) {
     if (!clip || !ED.getItem(st.map, clip)) { toast('Copy something first (select it, then Ctrl+C).'); return; }
     const src = ED.getItem(st.map, clip), big = Math.max(src.w || 0, src.depth || 0, 8) + 8;
+    growPts = [[x - big, z - big], [x + big, z + big]];
     const r = commit(() => ED.duplicateItem(st.map, clip, x, z), true, spanBox(x, z, big));
     if (typeof r === 'string') {
       const f = st.map.features || {}, n = ED.getItem(st.map, r);
@@ -752,6 +799,9 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   }
   function refreshUi() {
     bUndo.disabled = !st.undo.length; bRedo.disabled = !st.redo.length;
+    fabUndo.disabled = bUndo.disabled; fabRedo.disabled = bRedo.disabled;
+    fabUndo.title = st.undo.length ? 'Undo: ' + st.undoL[st.undoL.length - 1] : 'Nothing to undo'; fabRedo.title = st.redo.length ? 'Redo: ' + st.redoL[st.redoL.length - 1] : 'Nothing to redo';
+    fabUndoL.textContent = st.undo.length ? st.undoL[st.undoL.length - 1] : ''; fabRedoL.textContent = st.redo.length ? st.redoL[st.redoL.length - 1] : '';
     const ok = !errors.length;
     bSave.disabled = !ok; bPlayCar.disabled = !ok; bPlayBike.disabled = !ok;
     // selection panel
@@ -820,10 +870,12 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     const m = st.map, S = m.slab;
     const name = el('input', { type: 'text', maxlength: 60, value: m.meta.name });
     name.addEventListener('change', () => commit(() => { m.meta.name = name.value.trim() || 'My map'; m.meta.id = slug(m.meta.name); }, false));
+    const fitB = el('button', { class: 'btn', type: 'button', text: 'Fit map to content', title: 'Make the ground just big enough for what you have placed (with a margin)' });
+    fitB.addEventListener('click', () => commit(() => ED.fitSlab(m), true, null, 'Fit map'));
     const sl = (k, label) => { const i = el('input', { type: 'number', step: 5, value: S[k] }); i.addEventListener('change', () => commit(() => { const n = Object.assign({}, S, { [k]: Number(i.value) }); return ED.setSlab(m, n.x0, n.x1, n.z0, n.z1); })); return el('label', { class: 'ed-f' }, el('span', { text: label }), i); };
     mapBox.replaceChildren(el('h4', { text: 'This map' }), el('label', { class: 'ed-f' }, el('span', { text: 'Name' }), name),
       el('div', { class: 'ed-grid2' }, sl('x0', 'West edge (m)'), sl('x1', 'East edge (m)'), sl('z0', 'North edge (m)'), sl('z1', 'South edge (m)')),
-      el('p', { class: 'ed-note', text: (S.x1 - S.x0) + ' by ' + (S.z1 - S.z0) + ' m. Each side can be 20 to 400 m. Larger maps load only the part near the car.' }));
+      el('p', { class: 'ed-note', text: (S.x1 - S.x0) + ' by ' + (S.z1 - S.z0) + ' m. The map grows by itself as you place things near its edge, up to 1000 m on each side. Larger maps load only the part near the car.' }), fitB);
     // errors and warnings
     const items = [];
     if (errors.length) { items.push(el('p', { class: 'ed-bad', text: 'This map cannot be saved yet:' })); errors.slice(0, 5).forEach(x => items.push(el('p', { class: 'ed-note', text: (x.path ? x.path + ' ' : '') + x.msg }))); }
@@ -833,23 +885,25 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   }
 
   // ---------- top bar ----------
-  bExit.addEventListener('click', () => {
-    if (st.dirty && !bExit.dataset.armed) { bExit.dataset.armed = '1'; bExit.textContent = 'Discard changes?'; setTimeout(() => { delete bExit.dataset.armed; bExit.textContent = 'Exit editor'; }, 3500); return; }
-    try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+  bExit.addEventListener('click', async () => {
+    if (!slotsOk && st.dirty && !bExit.dataset.armed) { bExit.dataset.armed = '1'; bExit.textContent = 'Discard changes?'; setTimeout(() => { delete bExit.dataset.armed; bExit.textContent = 'Exit editor'; }, 3500); return; }
+    if (slotsOk) { try { await flush(); } catch (e) {} } else { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
     onExit && onExit();
   });
   bUndo.addEventListener('click', undo); bRedo.addEventListener('click', redo);
-  function replaceMap(m, note) {
-    ED.ensureFeatures(m); st.map = m; st.undo = []; st.redo = []; st.dirty = false; selected = null; view.s = 0; resize(); fit();
+  function replaceMap(m, note, slotId = null, cam = null) {
+    ED.ensureFeatures(m); st.map = m; st.undo = []; st.redo = []; st.undoL = []; st.redoL = []; st.dirty = false; st.slotId = slotId; thumbAt = 0; selected = null; view.s = 0; resize(); fit();
     if (v3) { v3.setMap(st.map); v3.fitView(); }
+    if (cam && v3) Object.assign(v3.cam, cam);
     after(true); if (note) toast(note);
+    if (!slotId) { clearTimeout(saveT); }
   }
-  bNew.addEventListener('click', () => replaceMap(ED.newMapFrom(base, { id: 'my-map', name: 'My map' }), 'Started a new map.'));
-  bHill.addEventListener('click', () => replaceMap(ED.clone(base), 'Opened a copy of Hill Loop. Change the name before you save.'));
+  bNew.addEventListener('click', async () => { await flush().catch(() => {}); replaceMap(ED.newMapFrom(base, { id: 'my-map', name: 'My map' }), 'Started a new map.'); });
+  bHill.addEventListener('click', async () => { await flush().catch(() => {}); replaceMap(ED.clone(base), 'Opened a copy of Hill Loop. Change the name before you save.'); });
   bOpen.addEventListener('click', () => file.click());
   file.addEventListener('change', async () => {
     const f = file.files && file.files[0]; file.value = ''; if (!f) return;
-    try { replaceMap(parseMap(await f.text()), 'Opened ' + f.name + '.'); }
+    try { const mm = parseMap(await f.text()); await flush().catch(() => {}); replaceMap(mm, 'Opened ' + f.name + '.'); }
     catch (err) { toast(err instanceof MapError ? err.message : 'That file could not be opened.'); }
   });
   bSave.addEventListener('click', () => {
@@ -860,8 +914,53 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     st.dirty = false; status.textContent = 'Saved ' + a.download; toast('Saved ' + a.download + '. Open it from Maps, Open a map file.');
   });
-  const play = kind => { const r = validateMap(st.map); if (!r.ok) { toast(describeErrors(r, 2)); return; } autosave(); onPlay && onPlay(ED.clone(st.map), kind, st); };
+  const play = kind => { const r = validateMap(st.map); if (!r.ok) { toast(describeErrors(r, 2)); return; } autosave(st.dirty); onPlay && onPlay(ED.clone(st.map), kind, st); };
   bPlayCar.addEventListener('click', () => play('car')); bPlayBike.addEventListener('click', () => play('bike'));
+
+  // ---------- Maps panel: your saved maps on this device ----------
+  let panel = null;
+  const ago = t => { const d = (Date.now() - t) / 1000; return d < 60 ? 'just now' : d < 3600 ? Math.round(d / 60) + ' min ago' : d < 86400 ? Math.round(d / 3600) + ' h ago' : Math.round(d / 86400) + ' days ago'; };
+  function closeMaps() { if (panel) { panel.remove(); panel = null; } }
+  async function openSlot(id) {
+    try {
+      await flush().catch(() => {});
+      const got = await Store.loadSlot(id); if (!got) { toast('That map is no longer saved.'); return; }
+      const mm = parseMap(got.text); closeMaps();
+      replaceMap(mm, 'Opened ' + got.meta.name + '.', id, got.meta.cam);
+    } catch (err) { toast(err instanceof MapError ? err.message : 'That map could not be opened.'); }
+  }
+  async function openMaps() {
+    closeMaps();
+    const box = el('div', { class: 'e2-panel', role: 'dialog', 'aria-label': 'Your maps' });
+    const shade = el('div', { class: 'e2-shade' }, box); panel = shade;
+    shade.addEventListener('click', ev => { if (ev.target === shade) closeMaps(); });
+    stage.append(shade);
+    const head = el('div', { class: 'e2-phead' }, el('h3', { text: 'Your maps' }), el('button', { class: 'btn', type: 'button', text: 'Close', onclick: null }));
+    head.querySelector('button').addEventListener('click', closeMaps);
+    const list = el('div', { class: 'e2-list' }), note = el('p', { class: 'ed-note' });
+    const mk = (txt, fn) => { const b = el('button', { class: 'btn', type: 'button', text: txt }); b.addEventListener('click', fn); return b; };
+    const actions = el('div', { class: 'e2-pact' }, mk('New map', async () => { closeMaps(); bNew.click(); }), mk('Copy of Hill Loop', () => { closeMaps(); bHill.click(); }), mk('Open file', () => { closeMaps(); bOpen.click(); }), mk('Save file (backup)', () => { closeMaps(); bSave.click(); }));
+    box.append(head, actions, list, note);
+    if (!slotsOk) { list.append(el('p', { class: 'ed-warn', text: 'Saving on this device is not available in this browser. Use Save file to keep your work.' })); return; }
+    try { if (st.dirty || st.slotId) await autosave(true); } catch (e) {}
+    const render = async () => {
+      let items = []; try { items = await Store.listSlots(); } catch (e) { slotsOk = false; list.replaceChildren(el('p', { class: 'ed-warn', text: 'Could not read saved maps.' })); return; }
+      if (!panel) return;
+      if (!items.length) { list.replaceChildren(el('p', { class: 'ed-note', text: 'No saved maps yet. Your map is saved here automatically as soon as you change something.' })); }
+      else list.replaceChildren(...items.map(it => {
+        const cur = it.id === st.slotId;
+        const img = el('img', { class: 'e2-thumb', alt: '', width: 80, height: 60 }); if (it.thumb) img.src = it.thumb;
+        const nm = el('div', { class: 'e2-sname' }, el('b', { text: it.name }), cur ? el('span', { class: 'e2-cur', text: ' (open now)' }) : null, el('small', { text: (it.size ? Math.round(it.size[0]) + ' by ' + Math.round(it.size[1]) + ' m \u00B7 ' : '') + ago(it.updated) }));
+        const del = mk('Delete', async () => { if (!del.dataset.armed) { del.dataset.armed = '1'; del.textContent = 'Sure?'; setTimeout(() => { delete del.dataset.armed; del.textContent = 'Delete'; }, 3000); return; } await Store.deleteSlot(it.id); if (cur) st.slotId = null; render(); });
+        const rn = mk('Rename', async () => { const n = window.prompt('Name for this map', it.name); if (!n || !n.trim()) return; const name = n.trim().slice(0, 60); await Store.renameSlot(it.id, name); if (cur) { commit(() => { st.map.meta.name = name; st.map.meta.id = slug(name); }, false, null, 'Rename map'); } render(); });
+        const cp = mk('Copy', async () => { if (cur) await autosave(true); await Store.duplicateSlot(it.id); render(); });
+        return el('div', { class: 'e2-slot', 'data-id': it.id }, img, nm, el('div', { class: 'e2-sact' }, cur ? null : mk('Open', () => openSlot(it.id)), rn, cp, del));
+      }));
+      const u = await Store.usage(); note.textContent = u ? 'Stored on this device: ' + (u.used / 1048576).toFixed(1) + ' MB used. Clearing browser data removes these maps, so keep a Save file backup of maps you care about.' : 'Stored on this device. Keep a Save file backup of maps you care about.';
+    };
+    render();
+  }
+  fabUndo.addEventListener('click', undo); fabRedo.addEventListener('click', redo); fabMaps.addEventListener('click', openMaps);
 
   // ---------- 3D and flat views ----------
   const bFlat = navBtn('Flat', 'Switch between the 3D view and the flat map', () => setMode(mode === '3d' ? 'flat' : '3d'));
@@ -903,17 +1002,19 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   renderTray();
   setMode('3d'); setTool('select', BASIC[0]); check(); refreshUi(); resize(); fit(); draw();
   setTimeout(() => { if (disposed) return; try { Object.assign(pieces, renderPieces(base)); renderTray(); } catch (e) { console.warn(e); } }, 120);
-  // offer the last unsaved draft (once, only if this is a fresh editor)
+  // offer to carry on: the newest slot, else a draft (this editor's, or the stable editor's)
+  Store.persist();
   if (!state) {
-    try {
-      const d = localStorage.getItem(DRAFT_KEY);
-      if (d) {
-        const draft = parseMap(d);
-        const b = el('button', { class: 'btn', type: 'button', text: 'Restore last draft: ' + draft.meta.name });
-        b.addEventListener('click', () => { replaceMap(draft, 'Draft restored.'); b.remove(); });
-        top.after(el('div', { class: 'ed-draft' }, b));
+    const offer = (label, fn) => { const b = el('button', { class: 'btn', type: 'button', text: label }); b.addEventListener('click', () => { fn(); row.remove(); }); row.append(b); };
+    const row = el('div', { class: 'ed-draft e2-offer' });
+    top.after(row);
+    const draftOffer = () => {
+      for (const [key, who] of [[DRAFT_KEY, ''], [CLASSIC_DRAFT_KEY, ' (from the stable editor)']]) {
+        try { const d = localStorage.getItem(key); if (d) { const draft = parseMap(d); offer('Restore draft' + who + ': ' + draft.meta.name, () => replaceMap(draft, 'Draft restored.')); break; } } catch (e) {}
       }
-    } catch (e) {}
+    };
+    if (slotsOk) Store.listSlots().then(list => { if (disposed) return; if (list.length) offer('Continue: ' + list[0].name, () => openSlot(list[0].id)); else draftOffer(); if (!row.childNodes.length) row.remove(); }).catch(() => { slotsOk = false; if (!disposed) { draftOffer(); if (!row.childNodes.length) row.remove(); } });
+    else { draftOffer(); if (!row.childNodes.length) row.remove(); }
   }
 
   return {
@@ -923,6 +1024,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
       const r = cv.getBoundingClientRect(); return [r.left + X(x), r.top + Z(z)];
     },
     get mode() { return mode; },
+    flush, openMaps, closeMaps, undo, redo, commit,
     // where the turn handle of the selected thing is on screen (for tests and for touch hints)
     rotHandle() { const ri = rotInfo(); if (!ri || !v3) return null; const p = v3.project(ri.hp[0], v3.groundH(ri.hp[0], ri.hp[1]) + 0.6, ri.hp[1]); return { client: [p[0], p[1]], centre: [ri.cx, ri.cz], r: ri.r }; },
     handles() { const out = []; if (selected && selected.kind === 'road' && v3) { const e = st.map.roads.edges[selected.edge]; if (e && e.type === 'curve') e.pts.forEach((q, i) => { const p = v3.project(q[0], v3.groundH(q[0], q[1]) + 0.9, q[1]); out.push({ idx: i, client: [p[0], p[1]] }); }); } return out; },
@@ -930,7 +1032,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     setMode,
     escape() { if (curvePts.length) { curvePts = []; buildOpts(); draw(); } else if (tool !== 'select') setTool('select', BASIC[0]); else { selected = null; refreshUi(); draw(); } },
     dispose() {
-      disposed = true; cancelAnimationFrame(raf); clearTimeout(saveT); ro.disconnect();
+      disposed = true; cancelAnimationFrame(raf); clearTimeout(saveT); clearTimeout(savedTagT); ro.disconnect(); closeMaps();
       window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey);
       if (v3) { v3.dispose(); v3 = null; }
       ground = null; W = null; lines = null; cv.width = cv.height = 0;

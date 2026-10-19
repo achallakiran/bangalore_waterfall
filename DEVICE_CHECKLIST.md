@@ -50,3 +50,12 @@ Open the live github.io page on each device. Tick what works; note anything odd 
 - [ ] Test drive (car and bike) and Drive here start on the edited map; Exit returns to the editor with the work and the camera.
 - [ ] Phone: switch 3D and Flat 5 times, open and leave the editor 3 times. The page stays smooth and does not reload itself.
 - [ ] Hill Loop itself still looks and drives exactly as before.
+
+## Map editor 2: undo, growing map, slots (v2.6.0)
+- [ ] iPhone: Undo, Redo and Maps buttons float at the bottom left of the map and are easy to hit. Undo says what it undoes (long-press or on a laptop, hover).
+- [ ] Place a tree or a road past the east edge: the ground grows and "The map grew to ..." appears. One Undo removes the tree and the extra ground together.
+- [ ] This map panel, Fit map to content trims empty ground without moving anything.
+- [ ] Make a change, tap Maps: your map is listed with a picture and "open now". Close the browser tab, reopen the game, Map editor: "Continue: <name>" brings it back with its camera.
+- [ ] Maps: Copy, Rename and Delete (two taps) work. New map and Copy of Hill Loop do not lose the map you left (it stays in the list).
+- [ ] Main menu has "Map editor 2.5 stable". It opens the previous editor, unchanged.
+- [ ] Hill Loop itself still looks and drives exactly as before.

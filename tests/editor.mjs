@@ -197,7 +197,6 @@ await page.setInputFiles('#scEditor input[type="file"]', { name: 'bad.json', mim
 await page.waitForTimeout(300);
 ok((await map()).meta.name === 'Hill Loop Track', 'a bad file is refused and the map stays as it was');
 await page.click('.ed-top button:has-text("Exit editor")');
-await page.click('.ed-top button:has-text("Discard changes?")').catch(() => {});
 await page.waitForFunction(() => !window.__v2.editor && !document.getElementById('scTitle').hidden, null, { timeout: 8000 }).catch(() => {});
 ok(await page.evaluate(() => window.__v2.editor === null && document.querySelectorAll('canvas').length === 0 && document.getElementById('scEditor').childElementCount === 0), 'leaving the editor gives back its canvases and DOM');
 ok(errors.length === 0, 'no page errors' + (errors.length ? ': ' + errors[0] : ''));

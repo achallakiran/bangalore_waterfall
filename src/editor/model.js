@@ -632,3 +632,53 @@ export function dropPoint(map, x, z, lines) {
   if (r.d <= map.roads.halfWidth + 1.5) return { x: r2(r.x), z: r2(r.z), psi: r2(psi) };
   return { x: r2(x), z: r2(z), psi: r2(psi) };
 }
+
+
+// ---------- A map that grows with what you put in it (N1) ----------
+export const SLAB_STEP = 12, SLAB_MARGIN = 24;
+// Make the ground reach at least `margin` metres past every point, in whole 12 m steps. Never shrinks. Returns true if it grew, false if not, or '!message'.
+export function growSlab(map, pts, margin = SLAB_MARGIN) {
+  const s = map.slab; let { x0, x1, z0, z1 } = s;
+  for (const p of pts) {
+    if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) continue;
+    if (p[0] - margin < x0) x0 = Math.floor((p[0] - margin) / SLAB_STEP) * SLAB_STEP;
+    if (p[0] + margin > x1) x1 = Math.ceil((p[0] + margin) / SLAB_STEP) * SLAB_STEP;
+    if (p[1] - margin < z0) z0 = Math.floor((p[1] - margin) / SLAB_STEP) * SLAB_STEP;
+    if (p[1] + margin > z1) z1 = Math.ceil((p[1] + margin) / SLAB_STEP) * SLAB_STEP;
+  }
+  if (x0 === s.x0 && x1 === s.x1 && z0 === s.z0 && z1 === s.z1) return false;
+  if (x1 - x0 > LIMITS.slabMax || z1 - z0 > LIMITS.slabMax) return '!The map can be at most ' + LIMITS.slabMax + ' m on each side.';
+  s.x0 = x0; s.x1 = x1; s.z0 = z0; s.z1 = z1; return true;
+}
+// Every point that belongs to the map's contents, for "Fit map to content".
+export function contentPoints(map) {
+  const out = [], f = ensureFeatures(map);
+  polylines(map).forEach(l => l.forEach(p => out.push([p[0], p[1]])));
+  map.scenery.forEach(s => {
+    if (s.t === 'bldgN') out.push([s.x0, s.zf], [s.x1, s.zf + s.depth]);
+    else if (s.t === 'bldgY') { const r = Math.hypot(s.w, s.depth) / 2; out.push([s.cx - r, s.cz - r], [s.cx + r, s.cz + r]); }
+    else if (Number.isFinite(s.x) && Number.isFinite(s.z)) out.push([s.x, s.z]);
+  });
+  ['signals', 'crossings'].forEach(k => (f[k] || []).forEach(a => out.push([a.x, a.z])));
+  (f.spawnAreas || []).forEach(a => out.push([a.x0, a.z0], [a.x1, a.z1]));
+  Object.values(map.terrain.biomes).forEach(l => l.forEach(b => { if (b.w > 0) out.push([b.x - b.sx, b.z - b.sz], [b.x + b.sx, b.z + b.sz]); }));
+  out.push([map.start.x, map.start.z]);
+  return out;
+}
+// Resize the ground to the contents plus a margin (can shrink or grow). Refused if hand-made ground would fall outside.
+export function fitSlab(map, margin = SLAB_MARGIN) {
+  const pts = contentPoints(map);
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  pts.forEach(p => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); });
+  x0 = Math.floor((x0 - margin) / SLAB_STEP) * SLAB_STEP; x1 = Math.ceil((x1 + margin) / SLAB_STEP) * SLAB_STEP;
+  z0 = Math.floor((z0 - margin) / SLAB_STEP) * SLAB_STEP; z1 = Math.ceil((z1 + margin) / SLAB_STEP) * SLAB_STEP;
+  const minSide = 48;
+  if (x1 - x0 < minSide) { const c = (x0 + x1) / 2; x0 = c - minSide / 2; x1 = c + minSide / 2; }
+  if (z1 - z0 < minSide) { const c = (z0 + z1) / 2; z0 = c - minSide / 2; z1 = c + minSide / 2; }
+  if (x1 - x0 > LIMITS.slabMax || z1 - z0 > LIMITS.slabMax) return '!Your things spread over more than ' + LIMITS.slabMax + ' m.';
+  const old = Object.assign({}, map.slab);
+  map.slab.x0 = x0; map.slab.x1 = x1; map.slab.z0 = z0; map.slab.z1 = z1;
+  const r = validateMap(map);
+  if (!r.ok) { Object.assign(map.slab, old); return '!Some hand-made ground would fall outside, so the map was left as it is.'; }
+  return true;
+}

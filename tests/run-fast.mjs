@@ -276,5 +276,29 @@ ok(parseMap(text).meta.id === 'hill-loop', 'parseMap accepts the shipped file');
   const m2 = ED.clone(m); ED.setStart(m2, dp.x, dp.z, dp.psi); ok(validateMap(m2).ok && m.start.x !== m2.start.x, 'drop: the test copy has the new start and the map is untouched');
 }
 
+// 9. N1: the map grows with what is placed, can be fitted to its contents, and carries an optional real-route note
+{
+  const base = fresh(), m = ED.newMapFrom(base, { id: 'grow', name: 'Grow' });
+  ED.growSlab(m, [[0, 0]]);
+  const s0 = Object.assign({}, m.slab);
+  ok(ED.growSlab(m, [[0, 0]]) === false && m.slab.x0 === s0.x0 && m.slab.z1 === s0.z1, 'grow: a point well inside the map changes nothing');
+  ok(ED.growSlab(m, [[s0.x1 + 5, 0]]) === true && m.slab.x1 >= s0.x1 + 5 + 24 && m.slab.x1 % 12 === 0 && m.slab.x0 === s0.x0, 'grow: a point past the east edge grows the east side in 12 m steps with a 24 m margin');
+  ok(ED.growSlab(m, [[0, s0.z0 - 3]]) === true && m.slab.z0 <= s0.z0 - 3 - 24 && m.slab.z0 % 12 === 0, 'grow: a point past the north edge grows the north side');
+  ok(validateMap(m).ok, 'grow: the grown map is valid');
+  const wide = ED.growSlab(m, [[5000 - 30, 0]]);
+  ok(typeof wide === 'string' && wide.startsWith('!'), 'grow: a map cannot pass the size limit (' + LIMITS.slabMax + ' m)');
+  ok(LIMITS.slabMax === 1000, 'grow: the side limit is 1000 m');
+  const r = ED.addRoad(m, [m.slab.x1 - 10, 0], [m.slab.x1 - 2, 10]);
+  ok(typeof r === 'number', 'grow: a road can now be placed in the grown area');
+  ok(ED.fitSlab(m) === true && validateMap(m).ok, 'fit: fitting keeps the map valid');
+  ok(m.slab.x1 - m.slab.x0 >= 48 && m.slab.z1 - m.slab.z0 >= 48 && (m.slab.x1 - m.slab.x0) % 12 === 0, 'fit: the fitted map is at least 48 m and in 12 m steps');
+  const pts = ED.contentPoints(m);
+  ok(pts.every(p => p[0] >= m.slab.x0 && p[0] <= m.slab.x1 && p[1] >= m.slab.z0 && p[1] <= m.slab.z1), 'fit: everything placed is inside the fitted map');
+  const mm = ED.clone(m); mm.meta.route = { realLengthM: 13120, ratio: 6.6, label: 'Utopia to Aquamarine' };
+  ok(validateMap(mm).ok, 'route note: a valid note is accepted');
+  mm.meta.route.ratio = 0; ok(!validateMap(mm).ok, 'route note: a ratio of zero is refused');
+  const g = createWorld(fresh()); ok(!!g, 'grow: Hill Loop still builds');
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nAll fast checks passed');
 process.exit(failed ? 1 : 0);

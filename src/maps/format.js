@@ -4,7 +4,7 @@ import { sampleCurve } from '../engine/curve.js';
 export const FORMAT = 'hill-loop-map';
 export const VERSION = 1;
 // Limits protect phones from files that would build far too much.
-export const LIMITS = { maxBytes: 2000000, slabMin: 20, slabMax: 400, maxEdges: 64, maxPads: 64, maxJunctions: 64, maxPotholes: 600, maxTraffic: 12, maxSignals: 64, maxCrossings: 64, maxSpawnAreas: 32, maxShops: 64, maxScenery: 4000, maxPrims: 20000, maxSculpt: 60000, maxPaint: 80000 };
+export const LIMITS = { maxBytes: 2000000, slabMin: 20, slabMax: 1000, maxEdges: 64, maxPads: 64, maxJunctions: 64, maxPotholes: 600, maxTraffic: 12, maxSignals: 64, maxCrossings: 64, maxSpawnAreas: 32, maxShops: 64, maxScenery: 4000, maxPrims: 20000, maxSculpt: 60000, maxPaint: 80000 };
 export const TRAFFIC_KEYS = ['nBike', 'nAuto'];
 export const SPAWN_KINDS = ['pedestrian', 'cow', 'buffalo', 'goat', 'dog', 'vehicle'];
 export const SCENERY_TYPES = ['prims', 'windows', 'tree', 'lamp', 'bldgN', 'bldgY', 'guardposts', 'cones', 'scatter'];
@@ -29,6 +29,14 @@ export function validateMap(m) {
   else {
     if (typeof meta.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(meta.id)) err('meta.id', 'must be 1 to 40 lowercase letters, digits or dashes');
     if (typeof meta.name !== 'string' || !meta.name.trim() || meta.name.length > 60) err('meta.name', 'must be a name of up to 60 characters');
+    // optional: the real-world route this map stands for (shown as real km in a later version)
+    if (meta.route !== undefined) {
+      if (!isObj(meta.route)) err('meta.route', 'must be an object');
+      else {
+        num('meta.route.realLengthM', meta.route.realLengthM, 1, 1e6); num('meta.route.ratio', meta.route.ratio, 0.5, 100);
+        if (meta.route.label !== undefined && (typeof meta.route.label !== 'string' || meta.route.label.length > 80)) err('meta.route.label', 'must be text of up to 80 characters');
+      }
+    }
   }
 
   // slab and ground

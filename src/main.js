@@ -18,7 +18,7 @@ const host = createHost({ root: $('gameRoot'), tpl: $('gameTpl') });
 const maps = createMapManager();
 let customMap = null;                       // a map the player opened from a file; the built-in map is fetched only when a game starts
 const DEFAULT_RIDE_TEXT = $('rideText').textContent;
-let editor = null, editorState = null, editorBase = null, returnToEditor = false, opening = false;
+let editorKind = 'new', editor = null, editorState = null, editorBase = null, returnToEditor = false, opening = false;
 let current = 'scTitle', stack = [], paused = false, settingsFromPause = false, toastT = 0;
 
 applyGlobal();
@@ -68,11 +68,12 @@ $('mapFile').addEventListener('change', async e => {
 });
 
 // ---- Map editor: its code loads only when opened and is released when closed ----
-async function openEditor(state) {
+async function openEditor(state, kind) {
   if (opening) return;
+  if (kind) editorKind = kind;
   opening = true;
   try {
-    const [{ mountEditor }] = await Promise.all([import('./editor/editor.js')]);
+    const [{ mountEditor }] = await Promise.all([(editorKind === 'classic' ? import('./editor-classic/editor.js') : import('./editor/editor.js'))]);
     if (!editorBase) { const m = await maps.load('hill-loop'); editorBase = JSON.parse(JSON.stringify(m)); maps.release(); }
     SCREENS.forEach(s => { $(s).hidden = s !== 'scEditor'; }); current = 'scEditor'; stack = [];
     editor = mountEditor($('scEditor'), { state, base: editorBase, onExit: closeEditor, onPlay: playFromEditor, onToast: toast });
@@ -91,7 +92,8 @@ function playFromEditor(map, kind, state) {
   customMap = map; returnToEditor = true;
   startGame(kind);
 }
-$('mEditor').addEventListener('click', () => openEditor(null));
+$('mEditor').addEventListener('click', () => openEditor(null, 'new'));
+$('mEditorClassic').addEventListener('click', () => openEditor(null, 'classic'));
 
 // ---- Settings ----
 bindSettings({ onLive: p => host.applyLive(p) });

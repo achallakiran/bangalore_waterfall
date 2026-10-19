@@ -8,8 +8,8 @@ Units are metres. `x` runs east, `z` runs south (so north is negative `z`), `y` 
 
 | Section | What it holds |
 | --- | --- |
-| `meta` | `id` (lowercase letters, digits, dashes), `name`, optional `author`, `description` |
-| `slab` | The ground area: `x0, x1, z0, z1`. Each side 20 to 400 m |
+| `meta` | `id` (lowercase letters, digits, dashes), `name`, optional `author`, `description`, and optional `route` = `{ realLengthM, ratio, label }` (the real-world route this map stands for; `ratio` is real metres per game metre, used by a later version for real-km display) |
+| `slab` | The ground area: `x0, x1, z0, z1`. Each side 20 to 1000 m (the editor grows it in 12 m steps) |
 | `ground` | `layer` (surface thickness, m) and `chunk` (build chunk size, m) |
 | `terrain` | Water level, height range, noise scales, relief strength and the biome blobs (`hills`, `rock`, `scrub`, `lake`) |
 | `roads` | Road width, kerb, line and dash settings, junction blend radii, `edges` and `junctions` |
@@ -69,7 +69,7 @@ Items the editor makes carry an `id` so they can be found again. Any other field
 Up to 2 MB per file, 64 roads, 4000 scenery items, 20000 shapes, 600 potholes. These can be raised later once streaming (Phase 3) is in.
 
 ## Big maps
-If a map is too big to keep whole in memory for the device's budget, it is streamed around the player (see README, Memory budget). Nothing in the file changes; keep `slab` as large as the world really is (up to 400 m).
+If a map is too big to keep whole in memory for the device's budget, it is streamed around the player (see README, Memory budget). Nothing in the file changes; keep `slab` as large as the world really is (up to 1000 m).
 
 ## Try your own
 Copy `hill-loop.json`, change `meta.id` and `meta.name`, edit numbers, and open it from Maps, Open a map file. The map editor writes

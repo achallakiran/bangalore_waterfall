@@ -50,10 +50,12 @@ Main menu, Map editor. A Hot Wheels style 3D view of the real ground (made by th
 - **Buildings and shops**: click one to select it, then drag the ring's blue dot to turn it, press `[` or `]`, type an exact angle, or press Face road. The space field sets the gap between the front and the road edge. Copy, Row along road (lines up more of the same building, all facing the road) and Drive here are on the same panel.
 - **Roads**: straight, or curved (click points, Enter or double-click to finish; drag the handles afterwards). Slope shapes the hills along a road.
 - **Ground**: Raise, Lower, Smooth, Level and Paint brushes shape the space between roads and buildings. Roads never change; buildings sit on their own flat pad.
-- Undo and redo with Ctrl or Cmd + Z / + Y. Ctrl+C and Ctrl+V copy and paste the selected thing.
+- **Undo and redo**: big buttons float on the map (bottom left, next to Maps), and say what they will undo. Ctrl or Cmd + Z / + Y also work. Ctrl+C and Ctrl+V copy and paste the selected thing.
+- **The map grows by itself**: place something near or past the edge and the ground extends (12 m steps, 24 m margin, up to 1000 m a side) as part of the same undo step. *Fit map to content* in the This map panel trims empty ground.
 - **Save file** downloads the map JSON. Open it later from the editor, or from Maps, Open a map file.
 - **Test drive** plays the map you are editing, and Exit brings you back with your work, history and camera. **Drive here** (tile or button) starts from a chosen spot; the map's own start is unchanged.
-- A draft is kept in this browser while you edit, and offered again the next time the editor opens.
+- **Maps (slots)**: your map is saved on this device automatically (IndexedDB) as soon as you change something. The Maps button opens the list: Open, Rename, Copy, Delete, New map, Copy of Hill Loop, Open file. Coming back offers *Continue*. Clearing browser data removes slots, so use Save file as a backup.
+- **Stable editor**: the previous editor is kept unchanged as *Map editor 2.5 stable* in the main menu, with its own storage. Both read and write the same map files.
 - The editor's code and styles load only when it is opened. The 3D view frees its graphics memory when you switch to Flat and when you leave.
 
 The first road is always the oval loop (the lap counter follows it). Map format details: docs/MAP_FORMAT.md.
