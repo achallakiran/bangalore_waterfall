@@ -33,6 +33,7 @@
       <nav class="list" aria-label="Main menu">
         <button class="mbtn primary" type="button" id="mPlay">Play <small>Hill Loop</small></button>
         <button class="mbtn" type="button" id="mMaps">Maps</button>
+        <button class="mbtn" type="button" id="mEditor">Map editor</button>
         <button class="mbtn" type="button" id="mSettings">Settings</button>
         <button class="mbtn" type="button" id="mHelp">How to play</button>
         <button class="mbtn" type="button" id="mInstall" hidden>Install app <small id="mInstallSub"></small></button>
@@ -62,9 +63,12 @@
         <input type="file" id="mapFile" accept=".json,application/json" hidden>
       </div>
       <p class="note maperr" id="mapMsg" role="alert" hidden></p>
-      <p class="note">Maps are JSON files. Map editing and imports from Mapbox or a photo arrive in later versions.</p>
+      <p class="note">Maps are JSON files. Build your own in the Map editor; imports from Mapbox or a photo arrive in a later version.</p>
     </div>
   </section>
+
+  <!-- Map editor (its code and styles load only when it is opened) -->
+  <section class="screen" id="scEditor" hidden aria-label="Map editor"></section>
 
   <!-- Choose a ride -->
   <section class="screen" id="scRide" hidden aria-labelledby="rideH">

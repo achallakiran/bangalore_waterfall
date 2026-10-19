@@ -1,0 +1,36 @@
+/* Map editor screen. Loaded together with the editor code, only when the editor is opened. */
+#scEditor { display: flex; flex-direction: column; place-items: initial; gap: 8px; padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px)); overflow: hidden; background: var(--bg); }
+#scEditor[hidden] { display: none; }
+.ed-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.ed-topbtns { display: flex; flex-wrap: wrap; gap: 6px; }
+.ed-top .btn { padding: 8px 12px; }
+.ed-top .btn:disabled { opacity: 0.45; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.ed-draft { display: flex; }
+.ed-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 8px; }
+.ed-stage { position: relative; min-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.ed-canvas { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+.ed-canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.ed-status { position: absolute; left: 8px; bottom: 8px; padding: 4px 8px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); font: 11px/1.3 var(--font-mono); color: var(--muted); pointer-events: none; }
+.ed-side { overflow: auto; display: grid; gap: 10px; align-content: start; padding-right: 2px; }
+.ed-tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ed-tool { padding: 9px 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); font-weight: 650; font-size: 13px; cursor: pointer; }
+.ed-tool[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.ed-hint { margin: 0; font-size: 12px; color: var(--muted); }
+.ed-opts, .ed-sel, .ed-map { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.ed-opts[hidden], .ed-sel[hidden] { display: none; }
+.ed-side h4 { margin: 0; font-size: 14px; font-weight: 750; }
+.ed-f { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.ed-f.row { display: flex; align-items: center; gap: 8px; }
+.ed-f input[type="number"], .ed-f input[type="text"], .ed-f select { width: 100%; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; font-size: 14px; }
+.ed-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ed-note { margin: 0; font-size: 12px; color: var(--muted); }
+.ed-errs { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.ed-errs p { margin: 0; }
+.ed-bad { color: #C0392B; font-weight: 650; font-size: 13px; }
+.ed-good { color: #2E8B57; font-weight: 650; font-size: 13px; }
+.ed-warn { color: #B7791F; font-size: 12px; }
+@media (max-width: 760px) {
+  .ed-body { grid-template-columns: 1fr; grid-template-rows: minmax(240px, 1fr) minmax(0, 40%); }
+  .ed-tools { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}

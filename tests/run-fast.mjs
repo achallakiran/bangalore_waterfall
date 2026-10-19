@@ -9,6 +9,7 @@ import { ROOT, REF, worldFingerprint } from './lib.mjs';
 import { validateMap, describeErrors, LIMITS } from '../src/maps/format.js';
 import { createMapManager, parseMap, MapError } from '../src/maps/manager.js';
 import { createWorld } from '../src/engine/world.js';
+import * as ED from '../src/editor/model.js';
 
 let failed = 0;
 const ok = (c, msg) => { console.log((c ? 'PASS ' : 'FAIL ') + msg); if (!c) failed++; };
@@ -108,6 +109,59 @@ await rejects('network failure is explained', createMapManager({ fetchImpl: asyn
 await rejects('oversized file is refused', mgr.load({ text: ' '.repeat(LIMITS.maxBytes + 1) }));
 ok(mgr.current === null, 'a refused file leaves nothing loaded');
 ok(parseMap(text).meta.id === 'hill-loop', 'parseMap accepts the shipped file');
+
+// 5. map editor operations (Phase 4): every edit leaves a map the validator accepts, and edits do what they say
+{
+  const base = fresh();
+  const m = ED.newMapFrom(base, { id: 'edit-test', name: 'Edit Test' });
+  const valid = (label) => { const r = validateMap(m); ok(r.ok, 'editor: ' + label + (r.ok ? '' : ': ' + describeErrors(r, 4))); return r.ok; };
+  valid('a new map from Hill Loop is valid');
+  ok(m.scenery.length === 0 && m.roads.edges.length === 1 && m.pads.length === 0, 'editor: a new map has the oval only and no buildings');
+  const n = ED.addRoad(m, [-30, -15], [30, -15], 0.5, 2);
+  ok(typeof n === 'number' && m.roads.edges.length === 2, 'editor: a cross road is added');
+  ok(m.roads.junctions.length >= 2, `editor: junctions are made where the road meets the oval (${m.roads.junctions.length})`);
+  valid('map with a cross road');
+  ok(ED.addRoad(m, [0, 0], [1, 0]).startsWith('!'), 'editor: a road under 4 m is refused');
+  ok(ED.addRoad(m, [0, 0], [500, 0]).startsWith('!'), 'editor: a road outside the map is refused');
+  const hp = ED.setRoadHeight(m, n, 15, 3.5);
+  ok(m.roads.edges[n].profile.length === 3 && m.roads.edges[n].profile[1][1] === 3.5, 'editor: a slope point is added to a road');
+  ED.setRoadHeight(m, n, 15.5, 1.2);
+  ok(m.roads.edges[n].profile.length === 3 && m.roads.edges[n].profile[1][1] === 1.2, 'editor: a nearby height point is moved, not duplicated');
+  ED.setRoadHeight(m, 0, 0, 1);
+  const ov = m.roads.edges[0].profile; ok(ov[0][1] === 1 && ov[ov.length - 1][1] === 1, 'editor: the oval keeps closing when its start height changes');
+  valid('map with slopes');
+  ok(ED.removeRoadHeight(m, n, 15) === true && m.roads.edges[n].profile.length === 2, 'editor: a slope point is removed');
+  const b = ED.addBuilding(m, { x0: -30, x1: -20, z0: 5, z1: 12, h: 8 });
+  ok(typeof b === 'string' && !b.startsWith('!') && m.pads.some(p => p.id === b) && m.scenery.some(s => s.t === 'bldgN' && s.pad === b), 'editor: a building makes a pad and a building item');
+  const sh = ED.addBuilding(m, { x0: -15, x1: -6, z0: 5, z1: 11, h: 4.5, shop: { name: 'Corner Store' } });
+  ok(m.features.shops.some(s => s.id === sh && s.name === 'Corner Store') && m.scenery.some(s => s.of === sh), 'editor: a shop is a building with a name and an awning');
+  ok(ED.addBuilding(m, { x0: 0, x1: 1, z0: 0, z1: 1 }).startsWith('!'), 'editor: a tiny building is refused');
+  valid('map with buildings and a shop');
+  ok(ED.addTree(m, 10, 10) && ED.addLamp(m, 12, 10, 1), 'editor: tree and lamp are added');
+  ED.addSignal(m, 0, -12, 0); ED.addSignal(m, 4, -12, 3.14, 'police'); ED.addCrossing(m, 6, 0, 0, 5);
+  ED.addSpawnArea(m, 'cow', 20, 4, 26, 9, 2); ED.addSpawnArea(m, 'pedestrian', -12, 3, -6, 4, 6);
+  ok(ED.addSpawnArea(m, 'dragon', 0, 0, 5, 5).startsWith('!'), 'editor: an unknown spawn kind is refused');
+  valid('map with signals, crossing and spawn areas');
+  ok(ED.hitTest(m, -25, 8).id === b && ED.hitTest(m, 0, -12).kind === 'signal' && ED.hitTest(m, 23, 6).kind === 'spawn', 'editor: hit tests find buildings, signals and spawn areas');
+  ok(ED.removeById(m, sh) === true && !m.pads.some(p => p.id === sh) && !m.features.shops.length && !m.scenery.some(s => s.of === sh), 'editor: removing a shop removes its pad, awning and listing');
+  const k0 = m.terrain.biomes.lake.length; ED.addBlob(m, 'lake', 20, 10, 6, 5, 1);
+  ok(m.terrain.biomes.lake.length === k0 + 1 && ED.removeBlobNear(m, 20, 10) === 'lake' && m.terrain.biomes.lake.length === k0, 'editor: a terrain area is added and removed');
+  ED.setOval(m, 18, 12);
+  ok(Math.abs(m.roads.edges[0].profile.at(-1)[0] - (4 * 18 + 2 * Math.PI * 12)) < 1e-9, 'editor: resizing the oval stretches its profile to the new length');
+  valid('map after the oval was resized');
+  ED.addRoad(m, [-20, -30], [20, -30], 0, 0); ED.addRoad(m, [0, -35], [0, -25], 0, 0);
+  ok(ED.removeRoad(m, 1) === true, 'editor: a cross road is removed');
+  valid('map after a road was removed (others renumbered)');
+  ok(ED.removeRoad(m, 0).startsWith('!'), 'editor: the oval cannot be removed');
+  const w = ED.warnings(ED.newMapFrom(base)); ok(Array.isArray(w), 'editor: warnings list is produced');
+  ED.addBuilding(m, { x0: -3, x1: 3, z0: -2, z1: 2, h: 5 });
+  ok(ED.warnings(m).some(t => /touches a road/.test(t)), 'editor: a building on a road gets a warning');
+  const bad = JSON.parse(JSON.stringify(m)); bad.features.spawnAreas[0].kind = 'x';
+  ok(!validateMap(bad).ok, 'validator: a bad spawn area kind is refused');
+  const bad2 = JSON.parse(JSON.stringify(m)); bad2.features.signals[0].kind = 'x';
+  ok(!validateMap(bad2).ok, 'validator: a bad signal kind is refused');
+  ok(validateMap(fresh()).ok, 'validator: maps without a features section are still valid');
+}
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nAll fast checks passed');
 process.exit(failed ? 1 : 0);

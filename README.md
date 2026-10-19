@@ -42,6 +42,18 @@ No Actions? Run `npm run build` and publish the `dist` folder (for example to a 
 
 Set `CHROMIUM_PATH` to use a specific browser; otherwise `npx playwright-core install chromium` first.
 | `npm run build && npm run test:stream` | Streaming: Hill Loop forced to stream under a small budget (same ground heights as the whole build, cubes stay under budget); a 320 m map streams by itself and stays bounded | Chromium |
+| `npm run build && npm run test:editor` | Map editor: drives the real screen with the mouse (road, slope, building, shop, signal, crossing, spawn area), undo and redo, saves a file the validator accepts, test-drives it and returns to the editor, opens a file, then leaves with nothing left behind | Chromium |
+
+## Map editor (Phase 4)
+Main menu, Map editor. A top-down view of the real ground (made by the same maths as the game), with tools: Select, Pan, Road, Slope, Terrain, Building (with Shop), Tree, Lamp, Signal, Crossing, Spawn area, Start and Erase. Changes can be undone and redone (Ctrl or Cmd + Z, and + Y). The editor warns about buildings on roads and a start that is not on a road, and will not save or test-drive a map the validator refuses.
+- **New map** starts from the Hill Loop oval with nothing else; **Hill Loop** opens a copy of the shipped map; **Open file** loads any map JSON.
+- **Save file** downloads the map JSON. Open it later from the editor, or from Maps, Open a map file.
+- **Test drive** plays the map you are editing, and Exit brings you back to the editor with your work and undo history.
+- A draft is kept in this browser while you edit, and offered again the next time the editor opens.
+- Signals, crossings, spawn areas and shop names are saved in an optional `features` section. The game ignores them for now; the traffic, signal and people versions will bring them to life.
+- The editor's code and styles load only when it is opened, and everything is released when it closes.
+
+Limits for now: the first road is always the oval loop (the lap counter follows it), and other roads are straight pieces. Curved and free-drawn roads come with the next editor version.
 
 ## Memory budget (Phase 3)
 The game never holds more voxel cubes than the device budget (Settings, Memory budget: Auto, Low 250k, Medium 450k, High 900k; Auto picks from device memory, cores and touch). If the whole map fits (Hill Loop always does), it is built whole exactly as before. A bigger map is streamed: the ground is built in 12 m chunks and the scenery in 16 m tiles around the player, nearest first, and far ones are disposed. Unloaded ground still answers height and surface queries from the map maths, so driving and the minimap stay correct. The budget applies the next time a game starts. Testing aids: add `?stream=1&cubes=30000` to the page address to force streaming with a given budget.

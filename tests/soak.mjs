@@ -46,6 +46,22 @@ ok(last.nodes <= first.nodes + 2, `DOM nodes stay flat across cycles (cycle 2: $
 ok(last.listeners <= first.listeners, `event listeners stay flat across cycles (cycle 2: ${first.listeners}, cycle ${CYCLES}: ${last.listeners}; start ${base.listeners}, the test driver adds some of its own)`);
 const growth = (last.heap - first.heap) / first.heap;
 ok(growth <= GROWTH_LIMIT, `heap does not keep growing: cycle 2 ${mb(first.heap)}, cycle ${CYCLES} ${mb(last.heap)} (${(growth * 100).toFixed(1)}%, limit ${GROWTH_LIMIT * 100}%)`);
+// The map editor too: open, edit a little, leave. Its canvas, picture and listeners must all be given back.
+const ed = [];
+for (let i = 1; i <= 4; i++) {
+  await page.evaluate(() => window.__v2.show('scTitle'));
+  await page.click('#mEditor');
+  await page.waitForFunction(() => window.__v2.editor && document.querySelectorAll('#scEditor canvas').length === 1);
+  await page.waitForTimeout(250);
+  await page.evaluate(() => { const e = window.__v2.editor; e.state.dirty = false; });
+  await page.click('.ed-top button:has-text("Exit editor")');
+  await page.waitForFunction(() => window.__v2.editor === null);
+  await page.waitForTimeout(200);
+  const s = await sample(); ed.push(s);
+  ok(s.canvases === 0 && s.root === 0 && !(await page.evaluate(() => document.getElementById('scEditor').childElementCount)), `editor cycle ${i}: after leaving, no canvas or editor DOM is left (heap ${mb(s.heap)}, ${s.nodes} nodes, ${s.listeners} listeners)`);
+}
+ok(ed[ed.length - 1].nodes <= ed[1].nodes + 2 && ed[ed.length - 1].listeners <= ed[1].listeners, `editor: DOM nodes and listeners stay flat across cycles (${ed[1].nodes}/${ed[1].listeners} then ${ed[ed.length - 1].nodes}/${ed[ed.length - 1].listeners})`);
+ok((ed[ed.length - 1].heap - ed[1].heap) / ed[1].heap <= GROWTH_LIMIT, `editor: heap does not keep growing (${mb(ed[1].heap)} then ${mb(ed[ed.length - 1].heap)})`);
 ok(errors.length === 0, 'no page errors' + (errors.length ? ': ' + errors[0] : ''));
 await browser.close(); srv.close();
 console.log(failed ? `\n${failed} soak check(s) failed` : '\nSoak passed');

@@ -13,11 +13,12 @@ import { registerSW } from './shell/pwa.js';
 import { createMapManager, MapError } from './maps/manager.js';
 
 const $ = id => document.getElementById(id);
-const SCREENS = ['scTitle', 'scMaps', 'scRide', 'scSettings', 'scHelp', 'scAbout'];
+const SCREENS = ['scTitle', 'scMaps', 'scRide', 'scSettings', 'scHelp', 'scAbout', 'scEditor'];
 const host = createHost({ root: $('gameRoot'), tpl: $('gameTpl') });
 const maps = createMapManager();
 let customMap = null;                       // a map the player opened from a file; the built-in map is fetched only when a game starts
 const DEFAULT_RIDE_TEXT = $('rideText').textContent;
+let editor = null, editorState = null, editorBase = null, returnToEditor = false, opening = false;
 let current = 'scTitle', stack = [], paused = false, settingsFromPause = false, toastT = 0;
 
 applyGlobal();
@@ -65,6 +66,32 @@ $('mapFile').addEventListener('change', async e => {
     msg.textContent = err instanceof MapError ? err.message : 'This map could not be opened.'; msg.hidden = false;
   }
 });
+
+// ---- Map editor: its code loads only when opened and is released when closed ----
+async function openEditor(state) {
+  if (opening) return;
+  opening = true;
+  try {
+    const [{ mountEditor }] = await Promise.all([import('./editor/editor.js')]);
+    if (!editorBase) { const m = await maps.load('hill-loop'); editorBase = JSON.parse(JSON.stringify(m)); maps.release(); }
+    SCREENS.forEach(s => { $(s).hidden = s !== 'scEditor'; }); current = 'scEditor'; stack = [];
+    editor = mountEditor($('scEditor'), { state, base: editorBase, onExit: closeEditor, onPlay: playFromEditor, onToast: toast });
+  } catch (err) {
+    console.error(err); toast('The map editor could not be opened.'); show('scTitle');
+  }
+  opening = false;
+}
+function closeEditor() {
+  if (editor) { editor.dispose(); editor = null; }
+  editorState = null; editorBase = null; returnToEditor = false;
+  show('scTitle'); stack = [];
+}
+function playFromEditor(map, kind, state) {
+  editorState = state; editor.dispose(); editor = null;
+  customMap = map; returnToEditor = true;
+  startGame(kind);
+}
+$('mEditor').addEventListener('click', () => openEditor(null));
 
 // ---- Settings ----
 bindSettings({ onLive: p => host.applyLive(p) });
@@ -114,6 +141,7 @@ function resume() {
 function exitGame() {
   paused = false; $('scPause').hidden = true; $('scSettings').classList.remove('over'); settingsFromPause = false;
   host.unmount(); maps.release(); customMap = null; document.body.classList.remove('playing');
+  if (returnToEditor && editorState) { openEditor(editorState); return; }
   show('scTitle'); stack = [];
 }
 $('pResume').addEventListener('click', resume);
@@ -158,6 +186,7 @@ window.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase(), tag = e.target && e.target.tagName;
   if (paused && ['w', 'a', 's', 'd', 'c', 'r', ' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k) && tag !== 'BUTTON') { e.stopImmediatePropagation(); e.preventDefault(); return; }
+  if (current === 'scEditor') { if (k === 'escape' && editor && !e.repeat && tag !== 'INPUT' && tag !== 'SELECT') editor.escape(); return; }
   if (tag === 'INPUT' && e.target.type === 'text') return;
   if (k === 'f' && !e.repeat) { toggleFs(); return; }
   if ((k === 'escape' || k === 'p') && !e.repeat) {
@@ -182,6 +211,6 @@ if (params.has('parity')) {
   SCREENS.forEach(s => { $(s).hidden = true; });
   maps.load('hill-loop').then(map => { if (!host.mount('car', { start: false, map })) document.title = 'parity-nogl'; });
 }
-window.__v2 = { host, maps, settings, show, startGame, pause, resume, exitGame, get paused() { return paused; }, get current() { return current; } };
+window.__v2 = { get editor() { return editor; }, host, maps, settings, show, startGame, pause, resume, exitGame, get paused() { return paused; }, get current() { return current; } };
 
 registerSW();

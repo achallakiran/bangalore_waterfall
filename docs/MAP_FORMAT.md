@@ -19,6 +19,7 @@ Units are metres. `x` runs east, `z` runs south (so north is negative `z`), `y` 
 | `start` | Where the player starts |
 | `traffic` | The moving background vehicles (`nBike`, `nAuto`) |
 | `scenery` | Buildings, trees, lamps and props, in drawing order |
+| `features` | Optional. Things the editor places for later versions: `signals`, `crossings`, `spawnAreas`, `shops` |
 
 ## Roads
 `roads.edges[0]` must be the oval loop (`type: "oval"`, half-length `L`, end radius `R`). The lap counter follows it.
@@ -34,6 +35,14 @@ so a steeper pair of points is a steeper hill. Later phases add curved and free-
 - `windows`, `tree`, `lamp`, `bldgN` (a building on a pad): ready-made pieces with a few numbers.
 - `guardposts`, `cones`, `scatter`: rules that place many pieces (posts beside drops, cones before potholes, trees and boulders on a lattice).
 
+## Features (optional)
+Maps made in the editor may carry a `features` section. The current game ignores it; later versions use it.
+- `signals`: `{ id, kind: "light" | "police", x, z, psi }`
+- `crossings`: `{ id, x, z, psi, len }` (a pedestrian crossing, `psi` is the direction across the road)
+- `spawnAreas`: `{ id, kind: "pedestrian" | "cow" | "buffalo" | "goat" | "dog" | "vehicle", x0, z0, x1, z1, count }`
+- `shops`: `{ id, name, x0, x1, z0, z1 }` (the building itself is a `bldgN` item with the same `id`)
+Items the editor makes carry an `id` so they can be found again. Any other field is ignored by the game.
+
 ## Limits (memory safety)
 Up to 2 MB per file, 64 roads, 4000 scenery items, 20000 shapes, 600 potholes. These can be raised later once streaming (Phase 3) is in.
 
@@ -41,5 +50,5 @@ Up to 2 MB per file, 64 roads, 4000 scenery items, 20000 shapes, 600 potholes. T
 If a map is too big to keep whole in memory for the device's budget, it is streamed around the player (see README, Memory budget). Nothing in the file changes; keep `slab` as large as the world really is (up to 400 m).
 
 ## Try your own
-Copy `hill-loop.json`, change `meta.id` and `meta.name`, edit numbers, and open it from Maps, Open a map file. The editor (Phase 4) will write
+Copy `hill-loop.json`, change `meta.id` and `meta.name`, edit numbers, and open it from Maps, Open a map file. The map editor writes
 this same format.

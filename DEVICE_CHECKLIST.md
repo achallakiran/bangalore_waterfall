@@ -38,3 +38,11 @@ Open the live github.io page on each device. Tick what works; note anything odd 
 - [ ] Settings > Memory budget shows Auto / Low / Medium / High and the choice is remembered.
 - [ ] Hill Loop looks and plays exactly as before on every budget, including Low.
 - [ ] Phone: ride for 5 minutes, leave and start again 3 times. The page stays smooth and does not reload itself.
+
+## Map editor (Phase 4)
+- [ ] Main menu, Map editor opens a map view with tools on the side (below the map on a phone).
+- [ ] Mac and Windows: draw a road by dragging, shape it with Slope, drag a building, tick Shop and name it. Ctrl or Cmd + Z undoes.
+- [ ] Mouse: wheel zooms, right-drag or Space-drag pans. Touch: one finger uses the tool, Pan tool or two fingers moves the view, pinch zooms.
+- [ ] Save file downloads a .json; Maps, Open a map file plays it.
+- [ ] Test drive: car and bike both start on the edited map; Exit returns to the editor with your work.
+- [ ] Hill Loop itself still looks and drives exactly as before.

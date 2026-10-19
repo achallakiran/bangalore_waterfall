@@ -3,8 +3,9 @@
 export const FORMAT = 'hill-loop-map';
 export const VERSION = 1;
 // Limits protect phones from files that would build far too much.
-export const LIMITS = { maxBytes: 2000000, slabMin: 20, slabMax: 400, maxEdges: 64, maxPads: 64, maxJunctions: 64, maxPotholes: 600, maxTraffic: 12, maxScenery: 4000, maxPrims: 20000 };
+export const LIMITS = { maxBytes: 2000000, slabMin: 20, slabMax: 400, maxEdges: 64, maxPads: 64, maxJunctions: 64, maxPotholes: 600, maxTraffic: 12, maxSignals: 64, maxCrossings: 64, maxSpawnAreas: 32, maxShops: 64, maxScenery: 4000, maxPrims: 20000 };
 export const TRAFFIC_KEYS = ['nBike', 'nAuto'];
+export const SPAWN_KINDS = ['pedestrian', 'cow', 'buffalo', 'goat', 'dog', 'vehicle'];
 export const SCENERY_TYPES = ['prims', 'windows', 'tree', 'lamp', 'bldgN', 'guardposts', 'cones', 'scatter'];
 const PRIM_ARITY = { B: 9, PT: 8, C: 9, S: 7 };   // tag + fields
 
@@ -232,6 +233,29 @@ export function validateMap(m) {
       }
     }
   });
+  // features (optional): things the editor places that later versions of the game bring to life. The current game ignores them.
+  if (m.features !== undefined) {
+    const F = m.features;
+    if (!isObj(F)) err('features', 'must be an object');
+    else {
+      const ids = new Set();
+      const idOf = (p, o) => { if (o.id !== undefined) { if (typeof o.id !== 'string' || !o.id) err(p + '.id', 'must be a name'); else if (ids.has(o.id) && !p.startsWith('features.shops')) err(p + '.id', 'is used twice'); else ids.add(o.id); } };
+      const list = (k, max, fn) => { if (F[k] === undefined) return; if (arr('features.' + k, F[k], 0, max)) F[k].forEach((o, i) => { const p = 'features.' + k + '[' + i + ']'; if (!isObj(o)) return err(p, 'must be an object'); idOf(p, o); fn(p, o); }); };
+      list('signals', LIMITS.maxSignals, (p, o) => { ['x', 'z'].forEach(k => num(p + '.' + k, o[k], -5000, 5000)); num(p + '.psi', o.psi, -10, 10); if (o.kind !== 'light' && o.kind !== 'police') err(p + '.kind', 'must be light or police'); });
+      list('crossings', LIMITS.maxCrossings, (p, o) => { ['x', 'z'].forEach(k => num(p + '.' + k, o[k], -5000, 5000)); num(p + '.psi', o.psi, -10, 10); num(p + '.len', o.len, 1, 40); });
+      list('spawnAreas', LIMITS.maxSpawnAreas, (p, o) => {
+        if (!SPAWN_KINDS.includes(o.kind)) err(p + '.kind', 'must be one of ' + SPAWN_KINDS.join(', '));
+        ['x0', 'x1', 'z0', 'z1'].forEach(k => num(p + '.' + k, o[k], -5000, 5000));
+        if (fin(o.x0) && fin(o.x1) && o.x0 >= o.x1) err(p, 'x0 must be below x1');
+        if (fin(o.z0) && fin(o.z1) && o.z0 >= o.z1) err(p, 'z0 must be below z1');
+        num(p + '.count', o.count, 1, 30);
+      });
+      list('shops', LIMITS.maxShops, (p, o) => {
+        if (typeof o.name !== 'string' || !o.name.trim() || o.name.length > 40) err(p + '.name', 'must be a name of up to 40 characters');
+        ['x0', 'x1', 'z0', 'z1'].forEach(k => num(p + '.' + k, o[k], -5000, 5000));
+      });
+    }
+  }
   if (prims > LIMITS.maxPrims) err('scenery', 'has too many shapes (limit ' + LIMITS.maxPrims + ')');
   return { ok: errors.length === 0, errors };
 }
