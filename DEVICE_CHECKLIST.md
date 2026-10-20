@@ -59,3 +59,12 @@ Open the live github.io page on each device. Tick what works; note anything odd 
 - [ ] Maps: Copy, Rename and Delete (two taps) work. New map and Copy of Hill Loop do not lose the map you left (it stays in the list).
 - [ ] Main menu has "Map editor 2.5 stable". It opens the previous editor, unchanged.
 - [ ] Hill Loop itself still looks and drives exactly as before.
+
+## 2.6.1 (camera and extension zone)
+- [ ] Hand off: one finger drawing/moving never moves the camera.
+- [ ] Hand on: one finger slides the map; the touched spot stays under the finger; a flick coasts then stops.
+- [ ] Two fingers: sliding, pinching and twisting each do only their own thing (a little twist while sliding does not turn it).
+- [ ] Touch the ground past the map edge; drag a yellow edge dot: map grows, Undo says *Extend map*.
+- [ ] Draw a road or move a building past the edge: the map grows with it; one Undo takes it all back.
+- [ ] Tap far (more than 60 m) past the edge: refused with a message.
+- [ ] Diagnostics switch shows fps and gesture.

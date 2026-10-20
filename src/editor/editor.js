@@ -33,6 +33,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   const toast = (m) => onToast && onToast(m);
   let mode = '3d', v3 = null, ovT = 0, hoverRaf = 0, lastPtr = null;
   let tool = 'select', selected = null, W = null, ground = null, dirtyGround = true, groundT = 0, raf = 0, saveT = 0, disposed = false;
+  let handOn = false, gesture = '', diagOn = false, fpsN = 0, fpsT = performance.now(), fps = 0, stepMs = 0, ext = null, lastDistDraw = 0;
   let drag = null, hover = null, spaceDown = false, errors = [], warns = [], lines = null;
   const opts = { h0: '', h1: '', slopeH: 2, blob: 'hills', blobSize: 8, bh: 6, shopName: 'Corner Store', lampE: 1, sig: 'light', cross: 6, spawn: 'pedestrian', spawnN: 3, curve: false, style: 'house', tree: 'small', brush: 'raise', paint: 'grass', brushD: 8, brushS: 0.4, faceRoad: true, yaw: 0 };
 
@@ -58,11 +59,13 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   const compass = el('button', { class: 'ed-compass', type: 'button', title: 'North up', 'aria-label': 'Compass: click to face north' }, el('span', { text: 'N' }));
   // floating Undo / Redo / Maps: always on the map, big enough for a finger
   const fabBtn = (icon, word) => { const lab = el('small', { text: '' }); const b = el('button', { class: 'e2-fabbtn', type: 'button' }, el('span', { class: 'e2-ico', text: icon }), el('span', { class: 'e2-word', text: word }), lab); return [b, lab]; };
-  const [fabUndo, fabUndoL] = fabBtn('\u21B6', 'Undo'), [fabRedo, fabRedoL] = fabBtn('\u21B7', 'Redo'), [fabMaps] = fabBtn('\u25A4', 'Maps');
+  const [fabUndo, fabUndoL] = fabBtn('\u21B6', 'Undo'), [fabRedo, fabRedoL] = fabBtn('\u21B7', 'Redo'), [fabMaps] = fabBtn('\u25A4', 'Maps'), [fabHand] = fabBtn('\u270B', 'Hand'), [fabFit] = fabBtn('\u25CE', 'Fit');
+  fabHand.dataset.act = 'hand'; fabHand.title = 'Hand: one finger slides the map instead of using the tool'; fabHand.setAttribute('aria-pressed', 'false'); fabFit.dataset.act = 'fit'; fabFit.title = 'Show the whole map';
   fabUndo.dataset.act = 'undo'; fabRedo.dataset.act = 'redo'; fabMaps.dataset.act = 'maps';
   const savedTag = el('span', { class: 'e2-saved', 'aria-live': 'polite' });
-  const fab = el('div', { class: 'e2-fab', role: 'toolbar', 'aria-label': 'Undo, redo and maps' }, fabUndo, fabRedo, fabMaps, savedTag);
-  const stage = el('div', { class: 'ed-stage' }, cv, nav, status, fab);
+  const fab = el('div', { class: 'e2-fab', role: 'toolbar', 'aria-label': 'Undo, redo, hand, fit and maps' }, fabUndo, fabRedo, fabHand, fabFit, fabMaps, savedTag);
+  const diagBox = el('div', { class: 'e2-diag', hidden: true, 'aria-live': 'off' });
+  const stage = el('div', { class: 'ed-stage' }, cv, nav, status, fab, diagBox);
   root.replaceChildren(top, el('div', { class: 'ed-body' }, stage, side), file);
 
   // ---------- the picture tray ----------
@@ -88,12 +91,17 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   const snap = () => JSON.stringify(st.map);
   // growPts: points the next edit will touch. The ground grows (in 12 m steps, 24 m margin) to take them in, as part of the same undo step.
   let growPts = null;
+  const REACH = 60;   // a tap or drag may grow the map only this far past its edge; farther, use the edge handles
+  function tooFar(pts) {
+    const S = st.map.slab;
+    return pts.some(p => p && Number.isFinite(p[0]) && Math.max(S.x0 - p[0], p[0] - S.x1, S.z0 - p[1], p[1] - S.z1) > REACH);
+  }
   const slabKey = () => { const q = st.map.slab; return q.x0 + ',' + q.x1 + ',' + q.z0 + ',' + q.z1; };
   const labelNow = () => (tile && tool !== 'select' && tool !== 'pan' ? tile.label : 'change');
   function pushUndo(before, label) { st.undo.push(before); st.undoL.push(label); if (st.undo.length > 80) { st.undo.shift(); st.undoL.shift(); } st.redo.length = 0; st.redoL.length = 0; }
   function commit(fn, groundChanged = true, box = null, label = null) {
     const before = snap(), k0 = slabKey(), gp = growPts; growPts = null;
-    if (gp && gp.length) { const g = ED.growSlab(st.map, gp); if (typeof g === 'string') { st.map = JSON.parse(before); toast(g.slice(1)); return false; } }
+    if (gp && gp.length) { if (tooFar(gp)) { toast('That is too far past the edge. Drag a yellow edge handle to make the map bigger first.'); return false; } const g = ED.growSlab(st.map, gp); if (typeof g === 'string') { st.map = JSON.parse(before); toast(g.slice(1)); return false; } }
     const res = fn(st.map);
     if (typeof res === 'string' && res.startsWith('!')) { st.map = JSON.parse(before); toast(res.slice(1)); return false; }
     const grew = slabKey() !== k0;
@@ -287,9 +295,15 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   // ---------- tools ----------
   let tile = BASIC[0];
   const findTile = id => BASIC.concat(...SECTIONS.map(s => s.tiles)).find(t => t.id === id);
+  function setHand(on) {
+    handOn = !!on; fabHand.setAttribute('aria-pressed', String(handOn)); fabHand.classList.toggle('e2-on', handOn);
+    if (handOn) toast('Hand on: one finger slides the map. Pick a tool to go back.');
+    const c = activeCanvas(); if (c) c.style.cursor = handOn ? 'grab' : (tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair');
+  }
+  function diagUpdate() { if (!diagOn) return; diagBox.textContent = fps + ' fps · step ' + stepMs.toFixed(0) + ' ms · ' + (gesture || 'idle') + (handOn ? ' · hand' : '') + ' · ' + tool; }
   function setTool(id, t) {
     const tt = t || (tile && tile.tool === id ? tile : BASIC.concat(...SECTIONS.map(s => s.tiles)).find(x => x.tool === id));
-    tool = id; tile = tt || BASIC[0]; drag = null; curvePts = [];
+    tool = id; tile = tt || BASIC[0]; drag = null; curvePts = []; if (handOn) setHand(false);
     Object.assign(opts, tile.set || {});
     root.querySelectorAll('.ed-tool').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tile === tile.id)));
     hint.textContent = tile.tip || '';
@@ -436,7 +450,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
 
   // ---------- live edits (drags): applied to the map as you move, one undo step when you let go ----------
   function liveApply(fn, box, at) {
-    if (at) { const k0 = slabKey(), g = ED.growSlab(st.map, [at]); if (typeof g === 'string') return g; if (slabKey() !== k0) box = null; }
+    if (at) { if (tooFar([at])) return '!too far'; const k0 = slabKey(), g = ED.growSlab(st.map, [at]); if (typeof g === 'string') return g; if (slabKey() !== k0) box = null; }
     const r = fn(st.map);
     if (typeof r === 'string' && r.startsWith('!')) return r;
     st.dirty = true; lines = null; dirtyGround = true;
@@ -525,11 +539,15 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
       if (b) ov.box(b[0], b[1], b[2] + 0.2, b[3] + 0.2, b[4], b[5], b[6], 0xffffff);
       else if (it && (it.t === 'tree' || it.t === 'lamp')) ov.ring(it.x, it.z, Math.max(1, it.r || 0.8), 0xffffff, 0.3);
     }
+    // extension handles
+    const hr = Math.max(0.7, Math.min(14, v3.mpp() * 9));
+    extHandles().forEach(h => { const y = v3.groundH(h.x, h.z) + hr * 0.9; ov.dot(h.x, y, h.z, 0xffd23f, hr); });
     drawDyn3d();
   }
   function drawDyn3d() {
     if (!v3 || !v3.world) return;
     const ov = v3.ov; ov.use('dyn'); v3.clearOverlay('dyn');
+    if (ext && ext.cur) { const c = ext.cur; ov.drape([[c.x0, c.z0], [c.x1, c.z0], [c.x1, c.z1], [c.x0, c.z1], [c.x0, c.z0]], 0xffd23f, 0.6); ov.patch((c.x0 + c.x1) / 2, (c.z0 + c.z1) / 2, (c.x1 - c.x0) / 2, (c.z1 - c.z0) / 2, 0, 0xffd23f, 0.12, 0.3); }
     if (drag && drag.kind === 'road') ov.drape([drag.a, drag.cur], 0xffffff, 0.5);
     else if (drag && drag.kind) {
       const a = drag.a, b = drag.cur, x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), z0 = Math.min(a[1], b[1]), z1 = Math.max(a[1], b[1]);
@@ -596,11 +614,11 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     if (mv && q) {
       if (!mv.moved) return true;
       const nx = Math.round((q[0] + mv.off[0]) * 2) / 2, nz = Math.round((q[1] + mv.off[1]) * 2) / 2;
-      liveApply(m => ED.moveItem(m, mv.id, nx, nz), boxAround(nx, nz, mv.r));
+      liveApply(m => ED.moveItem(m, mv.id, nx, nz), boxAround(nx, nz, mv.r), [nx, nz]);
       return true;
     }
     if (hd) {
-      if (hd.kind === 'cp' && q) { liveApply(m => ED.moveCurvePoint(m, hd.edge, hd.idx, Math.round(q[0] * 2) / 2, Math.round(q[1] * 2) / 2)); return true; }
+      if (hd.kind === 'cp' && q) { liveApply(m => ED.moveCurvePoint(m, hd.edge, hd.idx, Math.round(q[0] * 2) / 2, Math.round(q[1] * 2) / 2), null, [q[0], q[1]]); return true; }
       if (hd.kind === 'ph') { const h = Math.round((hd.h + (hd.y0 - e.clientY) * v3.mpp() * 0.5) * 2) / 2; liveApply(m => ED.setRoadHeight(m, hd.edge, hd.t, h)); return true; }
     }
     if (stroke && q) {
@@ -611,16 +629,56 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     return false;
   }
   const dragging = () => rot || mv || hd || stroke;
+  // Cancel any edit that began under the first finger when a second finger arrives (it was a camera gesture, not an edit).
+  function abortLive() {
+    const o = rot || hd || stroke || mv;
+    if (o && o.before) { try { st.map = JSON.parse(o.before); lines = null; dirtyGround = true; if (v3) v3.invalidate(null, true, st.map); check(); refreshUi(); } catch (e) {} }
+    rot = hd = stroke = mv = null;
+  }
+  // ---------- extension handles: drag an edge or corner to make the map bigger ----------
+  const snap12 = v => Math.round(v / ED.SLAB_STEP) * ED.SLAB_STEP;
+  function extHandles() {
+    const S = st.map.slab, mx = (S.x0 + S.x1) / 2, mz = (S.z0 + S.z1) / 2;
+    return [{ id: 'n', x: mx, z: S.z0 }, { id: 's', x: mx, z: S.z1 }, { id: 'w', x: S.x0, z: mz }, { id: 'e', x: S.x1, z: mz },
+      { id: 'nw', x: S.x0, z: S.z0 }, { id: 'ne', x: S.x1, z: S.z0 }, { id: 'sw', x: S.x0, z: S.z1 }, { id: 'se', x: S.x1, z: S.z1 }];
+  }
+  function extHandleAt(e) {
+    if (!v3 || !v3.world) return null;
+    const r = e.pointerType === 'touch' ? 30 : 18; let best = null, bd = r;
+    for (const h of extHandles()) { const p = v3.project(h.x, v3.groundH(h.x, h.z) + 0.5, h.z), d = Math.hypot(p[0] - e.clientX, p[1] - e.clientY); if (d < bd) { bd = d; best = h; } }
+    return best;
+  }
+  function updateExt(q) {
+    const S = st.map.slab, c = Object.assign({}, S), id = ext.id;
+    if (id.includes('e')) c.x1 = Math.max(S.x1, snap12(q[0]));
+    if (id.includes('w')) c.x0 = Math.min(S.x0, snap12(q[0]));
+    if (id.includes('s')) c.z1 = Math.max(S.z1, snap12(q[1]));
+    if (id.includes('n')) c.z0 = Math.min(S.z0, snap12(q[1]));
+    const max = 1000; if (c.x1 - c.x0 > max) { if (id.includes('e')) c.x1 = c.x0 + max; else c.x0 = c.x1 - max; } if (c.z1 - c.z0 > max) { if (id.includes('s')) c.z1 = c.z0 + max; else c.z0 = c.z1 - max; }
+    ext.cur = c; status.textContent = 'Map will be ' + (c.x1 - c.x0) + ' by ' + (c.z1 - c.z0) + ' m (up to 1000 m a side)';
+  }
+  function finishExt() {
+    const c = ext && ext.cur, S = st.map.slab; ext = null; gesture = ''; diagUpdate();
+    if (!c || (c.x0 === S.x0 && c.x1 === S.x1 && c.z0 === S.z0 && c.z1 === S.z1)) { drawDyn3d(); return; }
+    commit(() => ED.setSlab(st.map, c.x0, c.x1, c.z0, c.z1), true, null, 'Extend map');
+    status.textContent = 'Map is now ' + (c.x1 - c.x0) + ' by ' + (c.z1 - c.z0) + ' m';
+  }
   function onDown(e) {
     const c = e.currentTarget; c.setPointerCapture(e.pointerId); c.focus({ preventScroll: true });
     const [px, py] = local(e); ptrs.set(e.pointerId, [px, py, e.clientX, e.clientY]);
     const is3 = mode === '3d' && v3;
     if (ptrs.size === 2) {
       const [a, b] = [...ptrs.values()];
-      pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), a: Math.atan2(b[1] - a[1], b[0] - a[0]), s: view.s, mx: (a[0] + b[0]) / 2, my: (a[1] + b[1]) / 2, cx: (a[2] + b[2]) / 2, cy: (a[3] + b[3]) / 2 };
-      drag = null; panning = null; orbiting = null; if (is3) v3.panEnd(); return;
+      pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), a: Math.atan2(b[1] - a[1], b[0] - a[0]), s: view.s, mx: (a[0] + b[0]) / 2, my: (a[1] + b[1]) / 2, cx: (a[2] + b[2]) / 2, cy: (a[3] + b[3]) / 2, lock: null };
+      pinch.d0 = pinch.d; pinch.a0 = pinch.a; pinch.cx0 = pinch.cx; pinch.cy0 = pinch.cy;
+      abortLive(); ext = null; drag = null; panning = null; orbiting = null; if (is3) { v3.panEnd(); v3.stopCoast(); } gesture = 'two fingers'; diagUpdate(); return;
     }
     const shift = e.shiftKey || spaceDown;
+    if (e.button === 0 && handOn) {
+      if (is3) { v3.panStart(e.clientX, e.clientY); panning = { three: true }; } else panning = { px, py, cx: view.cx, cz: view.cz };
+      c.style.cursor = 'grabbing'; gesture = 'slide'; diagUpdate(); return;
+    }
+    if (is3 && e.button === 0 && !shift) { const h = extHandleAt(e); if (h) { ext = { id: h.id, before: snap(), cur: Object.assign({}, st.map.slab) }; gesture = 'extend'; diagUpdate(); return; } }
     if (is3) {
       if (e.button === 1 || (e.button === 0 && shift && tool === 'pan') || (e.button === 2 && shift) || (e.button === 0 && spaceDown)) { v3.panStart(e.clientX, e.clientY); panning = { three: true }; c.style.cursor = 'grabbing'; return; }
       if (e.button === 2 || (e.button === 0 && tool === 'pan')) { orbiting = { x: e.clientX, y: e.clientY }; c.style.cursor = 'grabbing'; return; }
@@ -661,9 +719,20 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
       const [a, b] = [...ptrs.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]), ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
       const mcx = (a[2] + b[2]) / 2, mcy = (a[3] + b[3]) / 2;
       if (is3) {
-        v3.panStart(pinch.cx, pinch.cy); v3.panMove(mcx, mcy); v3.panEnd();
-        v3.zoom(pinch.d / d, mcx, mcy); v3.turn(-(ang - pinch.a));
-        pinch.d = d; pinch.a = ang; pinch.cx = mcx; pinch.cy = mcy; return;
+        // Decide once what the two fingers are doing (slide, zoom or turn) and ignore the rest until they lift.
+        if (!pinch.lock) {
+          const dd = Math.abs(d - pinch.d0), dc = Math.hypot(mcx - pinch.cx0, mcy - pinch.cy0);
+          let da = ang - pinch.a0; da = Math.atan2(Math.sin(da), Math.cos(da));
+          const arc = Math.abs(da) * pinch.d0 / 2, best = Math.max(dd, dc, arc);
+          if (best < 10) return;
+          pinch.lock = best === dc ? 'slide' : best === dd ? 'zoom' : 'turn';
+          pinch.d = d; pinch.a = ang; gesture = pinch.lock; diagUpdate();
+          if (pinch.lock === 'slide') v3.panStart(pinch.cx0, pinch.cy0);
+        }
+        if (pinch.lock === 'slide') v3.panMove(mcx, mcy);
+        else if (pinch.lock === 'zoom') { v3.zoom(pinch.d / d, mcx, mcy); pinch.d = d; }
+        else { let da = ang - pinch.a; da = Math.atan2(Math.sin(da), Math.cos(da)); v3.turn(-da); pinch.a = ang; }
+        return;
       }
       const bx = wx(pinch.mx), bz = wz(pinch.my);
       view.s = clamp(pinch.s * d / pinch.d, 1.2, 60);
@@ -676,22 +745,25 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
       hoverRaf = 0; if (disposed || !lastPtr) return;
       const q = toXZ(lastPtr);
       if (q) { hover = [Math.round(q[0]), Math.round(q[1])]; status.textContent = statusText(q[0], q[1]); }
-      if (dragging() && applyDrags(lastPtr, q)) { if (mode === '3d') drawDyn3d(); return; }
+      if (ext && q) { updateExt(q); if (mode === '3d') drawDyn3d(); return; }
+      if (dragging()) { const t0 = performance.now(); const did = applyDrags(lastPtr, q); stepMs = performance.now() - t0; if (did) { if (mode === '3d') drawDyn3d(); return; } }
       if (drag && downAt) {
         const [qx, qy] = local(lastPtr); moved = Math.max(moved, Math.hypot(qx - downAt[0], qy - downAt[1]));
         if (q && drag.kind === 'road') { const sp = snapPt(q[0], q[1], true); drag.cur = [sp.x, sp.z]; }
         else if (q && drag.kind) { const sp = snapPt(q[0], q[1]); drag.cur = [sp.x, sp.z]; }
       }
+      if (drag && drag.cur && drag.a) { const fake = { slab: Object.assign({}, st.map.slab) }; if (ED.growSlab(fake, [drag.a, drag.cur]) === true) status.textContent = 'Map will grow to ' + (fake.slab.x1 - fake.slab.x0) + ' by ' + (fake.slab.z1 - fake.slab.z0) + ' m'; }
       if (mode === '3d') drawDyn3d(); else draw();
     });
     if (downAt) { moved = Math.max(moved, Math.hypot(px - downAt[0], py - downAt[1])); if (mv && moved > 6) mv.moved = true; }
   }
   function onUp(e) {
     ptrs.delete(e.pointerId);
-    if (pinch) { if (ptrs.size < 2) pinch = null; return; }
+    if (pinch) { if (ptrs.size < 2) { if (pinch.lock === 'slide' && v3) v3.panEnd(); pinch = null; gesture = ''; diagUpdate(); } return; }
     const c = e.currentTarget;
     if (orbiting) { orbiting = null; c.style.cursor = tool === 'pan' ? 'grab' : 'crosshair'; return; }
-    if (panning) { if (panning.three) v3.panEnd(); panning = null; c.style.cursor = tool === 'pan' ? 'grab' : 'crosshair'; return; }
+    if (panning) { if (panning.three) v3.panEnd(); panning = null; gesture = ''; diagUpdate(); c.style.cursor = handOn || tool === 'pan' ? 'grab' : 'crosshair'; return; }
+    if (ext) { finishExt(); return; }
     if (rot || hd || stroke || (mv && mv.moved)) {
       const o = rot || hd || stroke || mv; const q = toXZ(e);
       if (!stroke && q) applyDrags(e, q);
@@ -708,7 +780,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     drag = null; downAt = null; draw();
   }
   const q0 = e => toXZ(e);
-  function onCancel(e) { ptrs.delete(e.pointerId); drag = null; panning = null; pinch = null; orbiting = null; rot = hd = stroke = mv = null; if (v3) v3.panEnd(); draw(); }
+  function onCancel(e) { ptrs.delete(e.pointerId); abortLive(); ext = null; gesture = ''; drag = null; panning = null; pinch = null; orbiting = null; rot = hd = stroke = mv = null; if (v3) v3.panEnd(); draw(); }
   function onWheel(e) {
     e.preventDefault();
     if (mode === '3d' && v3) { v3.zoom(Math.exp(e.deltaY * 0.0015), e.clientX, e.clientY); return; }
@@ -744,6 +816,8 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
       else if (k === 'r') v3.tilt(0.08); else if (k === 'f') v3.tilt(-0.08);
       else if (k === '=' || k === '+') v3.zoom(0.85); else if (k === '-') v3.zoom(1.18);
       else if (k === 'home') v3.preset('iso');
+      else if (k === 'arrowleft' || k === 'a') { e.preventDefault(); v3.slide(-v3.cam.dist * 0.05, 0); } else if (k === 'arrowright' || k === 'd') { e.preventDefault(); v3.slide(v3.cam.dist * 0.05, 0); }
+      else if (k === 'arrowup' || k === 'w') { e.preventDefault(); v3.slide(0, v3.cam.dist * 0.05); } else if (k === 'arrowdown' || k === 's') { e.preventDefault(); v3.slide(0, -v3.cam.dist * 0.05); }
     }
   };
   window.addEventListener('keydown', onKey); window.addEventListener('keyup', onKey);
@@ -873,9 +947,11 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     const fitB = el('button', { class: 'btn', type: 'button', text: 'Fit map to content', title: 'Make the ground just big enough for what you have placed (with a margin)' });
     fitB.addEventListener('click', () => commit(() => ED.fitSlab(m), true, null, 'Fit map'));
     const sl = (k, label) => { const i = el('input', { type: 'number', step: 5, value: S[k] }); i.addEventListener('change', () => commit(() => { const n = Object.assign({}, S, { [k]: Number(i.value) }); return ED.setSlab(m, n.x0, n.x1, n.z0, n.z1); })); return el('label', { class: 'ed-f' }, el('span', { text: label }), i); };
+    const dg = el('input', { type: 'checkbox' }); dg.checked = diagOn;
+    dg.addEventListener('change', () => { diagOn = dg.checked; diagBox.hidden = !diagOn; diagUpdate(); });
     mapBox.replaceChildren(el('h4', { text: 'This map' }), el('label', { class: 'ed-f' }, el('span', { text: 'Name' }), name),
       el('div', { class: 'ed-grid2' }, sl('x0', 'West edge (m)'), sl('x1', 'East edge (m)'), sl('z0', 'North edge (m)'), sl('z1', 'South edge (m)')),
-      el('p', { class: 'ed-note', text: (S.x1 - S.x0) + ' by ' + (S.z1 - S.z0) + ' m. The map grows by itself as you place things near its edge, up to 1000 m on each side. Larger maps load only the part near the car.' }), fitB);
+      el('p', { class: 'ed-note', text: (S.x1 - S.x0) + ' by ' + (S.z1 - S.z0) + ' m. The map grows by itself as you place things near its edge, up to 1000 m on each side. Larger maps load only the part near the car.' }), fitB, el('label', { class: 'ed-f' }, dg, el('span', { text: 'Diagnostics (speed and gesture, for reporting problems)' })));
     // errors and warnings
     const items = [];
     if (errors.length) { items.push(el('p', { class: 'ed-bad', text: 'This map cannot be saved yet:' })); errors.slice(0, 5).forEach(x => items.push(el('p', { class: 'ed-note', text: (x.path ? x.path + ' ' : '') + x.msg }))); }
@@ -961,6 +1037,8 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     render();
   }
   fabUndo.addEventListener('click', undo); fabRedo.addEventListener('click', redo); fabMaps.addEventListener('click', openMaps);
+  fabHand.addEventListener('click', () => setHand(!handOn));
+  fabFit.addEventListener('click', () => { if (v3) v3.preset('iso'); else { fit(); draw(); } });
 
   // ---------- 3D and flat views ----------
   const bFlat = navBtn('Flat', 'Switch between the 3D view and the flat map', () => setMode(mode === '3d' ? 'flat' : '3d'));
@@ -977,7 +1055,11 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   function make3d() {
     if (v3) return true;
     v3 = createView3D(stage, {
-      onFrame: c => { st.cam3 = { tx: c.tx, ty: c.ty, tz: c.tz, yaw: c.yaw, pitch: c.pitch, dist: c.dist }; compass.style.setProperty('--yaw', c.yaw + 'rad'); },
+      onFrame: c => {
+        st.cam3 = { tx: c.tx, ty: c.ty, tz: c.tz, yaw: c.yaw, pitch: c.pitch, dist: c.dist }; compass.style.setProperty('--yaw', c.yaw + 'rad');
+        fpsN++; const now = performance.now(); if (now - fpsT > 1000) { fps = Math.round(fpsN * 1000 / (now - fpsT)); fpsN = 0; fpsT = now; diagUpdate(); }
+        if (!lastDistDraw || Math.abs(c.dist - lastDistDraw) / lastDistDraw > 0.15) { lastDistDraw = c.dist; draw(); }
+      },
       onFail: msg => { console.warn('3D view unavailable:', msg); }
     });
     if (!v3) return false;

@@ -7,6 +7,8 @@ import { createScenery } from '../engine/scenery.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const PITCH_MIN = 0.1, PITCH_MAX = 1.553;
 const CUBE_BUDGET_COLUMNS = 110000;
+const ROAM = 200;                     // how far past the map edge the camera may go and the pointer may pick (metres)
+const EXT_BAND = 60;                  // width of the drawn extension zone (metres)
 
 export function createView3D(container, { getMap, onFrame, onFail }) {
   const THREE = window.THREE;
@@ -30,7 +32,7 @@ export function createView3D(container, { getMap, onFrame, onFail }) {
   sun.shadow.camera.near = 1; sun.shadow.camera.far = 600; sun.shadow.bias = -0.0008; sun.shadow.normalBias = 0.03;
   scene.add(sun, sun.target);
   const cubeGeo = new THREE.BoxGeometry(1, 1, 1), cubeMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-  const world = new THREE.Group(), overlay = new THREE.Group(), overlayDyn = new THREE.Group(); scene.add(world, overlay, overlayDyn);
+  const world = new THREE.Group(), overlay = new THREE.Group(), overlayDyn = new THREE.Group(), extGrp = new THREE.Group(); scene.add(world, overlay, overlayDyn, extGrp);
   let layer = 'static';
 
   // ---------- the map ----------
@@ -68,6 +70,7 @@ export function createView3D(container, { getMap, onFrame, onFail }) {
     chunks.forEach(freeMesh); chunks.clear(); dirty.clear();
     for (let a = 0; a < grid.na; a++) for (let b = 0; b < grid.nb; b++) dirty.add(a + ',' + b);
     objDirty = true; objAt = 0; shadowDirty = true;
+    buildExt();
     if (!keepCam) fitView();
     requestRender();
   }
@@ -78,7 +81,7 @@ export function createView3D(container, { getMap, onFrame, onFail }) {
     try { W = createWorld(map); SC = createScenery(W, map); } catch (e) { return; }
     const ngrid = W.chunkGrid(v);
     if (!grid || ngrid.na !== grid.na || ngrid.nb !== grid.nb || ngrid.x0 !== grid.x0 || ngrid.z0 !== grid.z0) { setMap(map); return; }
-    grid = ngrid;
+    grid = ngrid; buildExt();
     if (box === false) { /* objects only */ }
     else if (!box) { for (let a = 0; a < grid.na; a++) for (let b = 0; b < grid.nb; b++) dirty.add(a + ',' + b); }
     else {
@@ -151,7 +154,7 @@ export function createView3D(container, { getMap, onFrame, onFail }) {
     const maxT = 1600, step0 = 1.2;
     for (; t < maxT; t += step0) {
       const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t;
-      if (x < S.x0 - 30 || x > S.x1 + 30 || z < S.z0 - 30 || z > S.z1 + 30) { if (t > 50 && d.y >= 0) break; prevT = t; continue; }
+      if (x < S.x0 - ROAM || x > S.x1 + ROAM || z < S.z0 - ROAM || z > S.z1 + ROAM) { if (t > 50 && d.y >= 0) break; prevT = t; continue; }
       if (y <= groundH(x, z)) { hit = true; break; }
       prevT = t;
     }
@@ -210,21 +213,44 @@ export function createView3D(container, { getMap, onFrame, onFail }) {
   }
 
   // ---------- camera moves ----------
-  function orbit(dx, dy) { cam.yaw -= dx * 0.006; cam.pitch = clamp(cam.pitch + dy * 0.005, PITCH_MIN, PITCH_MAX); requestRender(); }
+  function orbit(dx, dy) { stopCoast(); cam.yaw -= dx * 0.006; cam.pitch = clamp(cam.pitch + dy * 0.005, PITCH_MIN, PITCH_MAX); requestRender(); }
   function setYaw(y) { cam.yaw = y; requestRender(); }
   function turn(da) { cam.yaw += da; requestRender(); }
   function tilt(da) { cam.pitch = clamp(cam.pitch + da, PITCH_MIN, PITCH_MAX); requestRender(); }
   // Pan: keep the ground point grabbed at (sx0, sy0) under the pointer at (sx, sy).
-  let grab = null;
-  function panStart(sx, sy) { const g = pickGround(sx, sy); grab = g ? { y: g.y, x: g.x, z: g.z } : { y: cam.ty, x: cam.tx, z: cam.tz }; }
+  let grab = null, last = null, coast = null;
+  const stopCoast = () => { coast = null; };
+  const clampT = () => { cam.tx = clamp(cam.tx, map.slab.x0 - ROAM, map.slab.x1 + ROAM); cam.tz = clamp(cam.tz, map.slab.z0 - ROAM, map.slab.z1 + ROAM); };
+  // The ground point under the finger when the slide begins is kept under the finger for the whole slide (it is picked once).
+  function panStart(sx, sy) { stopCoast(); const g = pickGround(sx, sy); grab = g ? { y: g.y, x: g.x, z: g.z } : { y: cam.ty, x: cam.tx, z: cam.tz }; last = null; }
   function panMove(sx, sy) {
     if (!grab) return; const p = pickPlane(sx, sy, grab.y); if (!p) return;
-    cam.tx = clamp(cam.tx + grab.x - p.x, map.slab.x0 - 40, map.slab.x1 + 40); cam.tz = clamp(cam.tz + grab.z - p.z, map.slab.z0 - 40, map.slab.z1 + 40);
-    cam.ty = groundH(cam.tx, cam.tz); requestRender();
+    const t = performance.now(), ox = cam.tx, oz = cam.tz;
+    cam.tx += grab.x - p.x; cam.tz += grab.z - p.z; clampT();
+    cam.ty += (groundH(cam.tx, cam.tz) - cam.ty) * 0.35;   // ease the height so a bumpy edge does not make the picture jump
+    if (last) { const dt = Math.max(1, t - last.t); last.vx = (cam.tx - ox) / dt * 0.6 + last.vx * 0.4; last.vz = (cam.tz - oz) / dt * 0.6 + last.vz * 0.4; last.t = t; } else last = { t, vx: 0, vz: 0 };
+    requestRender();
   }
-  function panEnd() { grab = null; }
+  // Let go: a quick slide keeps coasting for a moment, slowing down.
+  function panEnd() {
+    const l = last; grab = null; last = null;
+    if (l && performance.now() - l.t < 90 && Math.hypot(l.vx, l.vz) > 0.004) { coast = { vx: l.vx, vz: l.vz, t: performance.now() }; requestRender(); }
+  }
+  function coastStep() {
+    if (!coast) return;
+    const t = performance.now(), dt = Math.min(50, t - coast.t); coast.t = t;
+    cam.tx += coast.vx * dt; cam.tz += coast.vz * dt; clampT(); cam.ty += (groundH(cam.tx, cam.tz) - cam.ty) * 0.35;
+    const k = Math.exp(-dt / 220); coast.vx *= k; coast.vz *= k;
+    if (Math.hypot(coast.vx, coast.vz) < 0.0008) coast = null;
+  }
+  // Slide along the screen (keyboard): right and forward in metres.
+  function slide(right, fwd) {
+    stopCoast(); const c = Math.cos(cam.yaw), sn = Math.sin(cam.yaw);
+    cam.tx += right * c - fwd * sn; cam.tz += -right * sn - fwd * c; clampT(); cam.ty += (groundH(cam.tx, cam.tz) - cam.ty) * 0.5; requestRender();
+  }
   // Zoom toward the cursor: the ground point under it stays put.
   function zoom(factor, sx, sy) {
+    stopCoast();
     const before = sx == null ? null : pickGround(sx, sy);
     cam.dist = clamp(cam.dist * factor, 4, 800);
     if (before) {
@@ -233,7 +259,7 @@ export function createView3D(container, { getMap, onFrame, onFail }) {
         const after = pickPlane(sx, sy, before.y); if (!after) break;
         const dx = before.x - after.x, dz = before.z - after.z;
         if (Math.hypot(dx, dz) < 0.02) break;
-        cam.tx = clamp(cam.tx + dx, map.slab.x0 - 40, map.slab.x1 + 40); cam.tz = clamp(cam.tz + dz, map.slab.z0 - 40, map.slab.z1 + 40); cam.ty = groundH(cam.tx, cam.tz);
+        cam.tx = clamp(cam.tx + dx, map.slab.x0 - ROAM, map.slab.x1 + ROAM); cam.tz = clamp(cam.tz + dz, map.slab.z0 - ROAM, map.slab.z1 + ROAM); cam.ty = groundH(cam.tx, cam.tz);
       }
     }
     requestRender();
@@ -283,22 +309,42 @@ export function createView3D(container, { getMap, onFrame, onFail }) {
     dot(x, y, z, color = 0xffffff, r = 0.5) { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 8), fillMat(color, 0.95)); m.position.set(x, y, z); return add(m); }
   };
 
+  // ---------- the extension zone: a faint grid just outside the map edge, so you can see where it can grow ----------
+  let extKey = '';
+  function buildExt() {
+    if (!map || !W) return;
+    const S = map.slab, key = [S.x0, S.x1, S.z0, S.z1].join(',');
+    if (key === extKey) return; extKey = key;
+    while (extGrp.children.length) { const c = extGrp.children.pop(); if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); }
+    const ring = (o, color, op) => {
+      const x0 = S.x0 - o, x1 = S.x1 + o, z0 = S.z0 - o, z1 = S.z1 + o, pts = [], step = 6;
+      const edge = (ax, az, bx, bz) => { const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / step)); for (let i = 0; i < n; i++) { const x = ax + (bx - ax) * i / n, z = az + (bz - az) * i / n; pts.push(new THREE.Vector3(x, groundH(x, z) + 0.25, z)); } };
+      edge(x0, z0, x1, z0); edge(x1, z0, x1, z1); edge(x1, z1, x0, z1); edge(x0, z1, x0, z0); pts.push(pts[0].clone());
+      const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color, transparent: true, opacity: op, depthTest: false }));
+      l.renderOrder = 4; extGrp.add(l);
+    };
+    for (let o = 12; o <= EXT_BAND; o += 12) ring(o, 0xffffff, 0.34 - o / EXT_BAND * 0.22);
+    ring(0, 0xffd23f, 0.95);
+  }
+
   // ---------- render loop ----------
   function requestRender() { need = true; if (!raf && !disposed) raf = requestAnimationFrame(frame); }
   function frame() {
     raf = 0; if (disposed) return;
     pumpBuild(7);
+    coastStep();
     placeCamera();
     if (shadowDirty && !dirty.size) { renderer.shadowMap.needsUpdate = true; shadowDirty = false; }
     renderer.render(scene, camera);
     need = false;
     onFrame && onFrame(cam);
-    if (dirty.size || objDirty) requestRender();
+    if (dirty.size || objDirty || coast) requestRender();
   }
 
   function dispose() {
     disposed = true; cancelAnimationFrame(raf); ro.disconnect();
     chunks.forEach(freeMesh); chunks.clear(); freeMesh(objMesh); objMesh = null; clearOverlay();
+    while (extGrp.children.length) { const c = extGrp.children.pop(); if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); }
     ovMats.forEach(m => m.dispose()); ovMats.clear();
     cubeGeo.dispose(); cubeMat.dispose();
     if (sun.shadow.map) sun.shadow.map.dispose();
@@ -311,7 +357,7 @@ export function createView3D(container, { getMap, onFrame, onFail }) {
   return {
     canvas, cam, ov, setMap, invalidate, resize, render: requestRender, dispose, clearOverlay,
     pickGround, pickPlane, pickThings, rayAt, groundH, project, mpp, camPos: () => camera.position.toArray(),
-    orbit, turn, tilt, setYaw, zoom, panStart, panMove, panEnd, lookAt, preset, fitView,
+    orbit, turn, tilt, setYaw, zoom, panStart, panMove, panEnd, slide, stopCoast, lookAt, preset, fitView,
     get voxel() { return v; }, get building() { return building; }, get world() { return W; }, get scenery() { return SC; },
     stats() { let c = 0; chunks.forEach(m => { c += m.count; }); return { cubes: c + (objMesh ? objMesh.count : 0), chunks: chunks.size, voxel: v, pending: dirty.size }; }
   };
