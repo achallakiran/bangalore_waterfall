@@ -5,7 +5,7 @@ const APP = 'hl2-app-' + VERSION;
 const RUNTIME = 'hl2-runtime';
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(APP).then(c => c.addAll(PRECACHE)));
+  e.waitUntil(caches.open(APP).then(c => c.addAll(PRECACHE)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {

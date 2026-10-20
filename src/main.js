@@ -23,6 +23,7 @@ let current = 'scTitle', stack = [], paused = false, settingsFromPause = false, 
 
 applyGlobal();
 $('verLine').textContent = 'Version ' + __APP_VERSION__;
+document.title = 'Hill Loop Track v' + __APP_VERSION__;
 $('aboutVer').textContent = 'Version ' + __APP_VERSION__ + ' (built ' + __BUILD_DATE__ + ').';
 
 function toast(msg, ms = 4200) {
