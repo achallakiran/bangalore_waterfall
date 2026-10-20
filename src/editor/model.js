@@ -37,12 +37,29 @@ export function newMapFrom(base, { id = 'my-map', name = 'My map' } = {}) {
   return m;
 }
 
+// A blank map: flat open ground with no oval loop (the oval stays in the file, switched off, because the format wants a first road).
+// loop = true gives the oval back, in the middle of the map. size is the side in metres.
+export function blankMap(base, { id = 'my-map', name = 'My map', size = 192, loop = false } = {}) {
+  const m = newMapFrom(base, { id, name });
+  const h = Math.round(size / 2);
+  m.slab = { x0: -h, x1: h, z0: -h, z1: h };
+  const e = m.roads.edges[0];
+  e.profile = e.profile.map(p => [p[0], 0]);
+  m.terrain.biomes = { hills: [{ x: 0, z: 0, sx: 10, sz: 10, w: 0 }], rock: [{ x: 0, z: 0, sx: 10, sz: 10, w: 0 }], scrub: [{ x: 0, z: 0, sx: 10, sz: 10, w: 0 }], lake: [{ x: 0, z: 0, sx: 10, sz: 10, w: 0 }] };
+  m.traffic = [];
+  if (!loop) { e.off = true; m.start = { x: 0, z: 0, psi: 0 }; }
+  else { m.start = { x: -13.5, z: 1 - 15, psi: 0 }; }
+  if (m.layers) delete m.layers;
+  return m;
+}
+
 // ---------- Roads ----------
 // Centre lines of every road as lists of [x, z, distance]; used for junctions, snapping and hit tests.
 export function polylines(map) {
   const out = [];
   map.roads.edges.forEach((e, i) => {
     const pts = [];
+    if (i === 0 && e.off) { out.push(pts); return; }
     if (i === 0) {
       const W = createWorld(map), n = Math.ceil(W.LTOT / 1);
       for (let k = 0; k <= n; k++) { const t = Math.min(W.LTOT, k * W.LTOT / n), p = W.trackPoint(t, 0); pts.push([p.x, p.z, t]); }

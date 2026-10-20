@@ -767,6 +767,7 @@ function fmt(t) {
   return m + ':' + (s < 10 ? '0' : '') + s.toFixed(2);
 }
 function lapUpdate(dt) {
+  if (!World.hasLoop) return;
   const info = World.loopInfo(P.x, P.z);
   let d = info.s - lap.prevS;
   if (d > World.LTOT / 2) d -= World.LTOT; else if (d < -World.LTOT / 2) d += World.LTOT;
@@ -1111,8 +1112,7 @@ function frame(now) {
   if (state.orbit && !reduced && playing && state.cam === 'overview') OV.az += dt * 0.15;
   if (!cam.drag) cam.userAz *= Math.exp(-dt * 1.2);
 
-  NPC[0].key = kind === 'car' ? 'nBike' : 'nCar';
-  NPC[0].r = kind === 'car' ? 0.6 : 0.95;
+  if (NPC[0]) { NPC[0].key = kind === 'car' ? 'nBike' : 'nCar'; NPC[0].r = kind === 'car' ? 0.6 : 0.95; }
   NPC.forEach(n => placeNpc(n, dt));
 
   const pa = kind === 'car' ? A.pCar : A.pBike, sp = VEH[kind];

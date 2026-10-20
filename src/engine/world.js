@@ -50,6 +50,7 @@ const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Da
 export function createWorld(map) {
   const T = map.terrain, RD = map.roads, ground = map.ground;
   const oval = RD.edges[0];
+  const OFF = oval.off === true;                      // a map with no oval loop: the oval stays in the file as a placeholder but is never drawn or driven
   const L = oval.L, R = oval.R;                       // oval: half-length of the straights, radius of the ends (road centre line)
   const HW = RD.halfWidth, PAV = RD.pavement;         // tarmac half-width, pavement outer edge
   const LTOT = 4 * L + 2 * Math.PI * R;
@@ -63,6 +64,7 @@ export function createWorld(map) {
 
   // ---- Oval geometry ----
   function loopInfo(x, z) {
+    if (OFF) return { u: 1e9, s: 0 };
     const px = clamp(x, -L, L), dx = x - px, dz = z + R;
     const u = Math.hypot(dx, dz) - R;
     let s;
@@ -231,7 +233,7 @@ export function createWorld(map) {
     let H = sh / sw;
     biomes(x, z, bio);
     const n1 = vn(x, z, TN.s1, 1), n2 = vn(x, z, TN.s2, 2), n3 = vn(x, z, TN.s3, 4);
-    H += 0.5 * (n1 - 0.5) * 2;
+    H += (OFF ? 0 : 0.5) * (n1 - 0.5) * 2;
     H += bio.hills * (HR.hills[0] + HR.hills[1] * n1 + HR.hills[2] * n2);
     const ridge = 1 - Math.abs(2 * n2 - 1);
     H += bio.rock * (HR.rock[0] + HR.rock[1] * ridge + HR.rock[2] * n3);
@@ -423,6 +425,6 @@ export function createWorld(map) {
     return HF.kind[i + HF.nx * k];
   }
 
-  return { L, R, HW, PAV, LTOT, SLAB, WATER, Y_MIN, Y_MAX, K, COLS, MULT, LINES, JUNC, FLATS, POTS, loopInfo, trackPoint, loopH, loopF, column, heightAt,
+  return { hasLoop: !OFF, L, R, HW, PAV, LTOT, SLAB, WATER, Y_MIN, Y_MAX, K, COLS, MULT, LINES, JUNC, FLATS, POTS, loopInfo, trackPoint, loopH, loopF, column, heightAt,
     edgeLen, edgeH, edgePoint, inFlat, potholeAt, tarmacCount, buildGround, chunkGrid, buildChunk, createChunkStore, hfY, hfKind, S_EAST, S_WEST, S_FAR0, hash3, vn, biomes, pad, map };
 }

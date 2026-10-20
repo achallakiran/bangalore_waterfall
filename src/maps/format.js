@@ -106,6 +106,7 @@ export function validateMap(m) {
         if (!isObj(e)) return err(p, 'must be an object');
         if (i === 0) {
           if (e.type !== 'oval') return err(p + '.type', 'the first road must be the oval loop');
+          if (e.off !== undefined && typeof e.off !== 'boolean') err(p + '.off', 'must be true or false');
           num(p + '.L', e.L, 1, 500); num(p + '.R', e.R, 3, 500);
           if (fin(e.L) && fin(e.R)) profile(p + '.profile', e.profile, 4 * e.L + 2 * Math.PI * e.R, T);
         } else {

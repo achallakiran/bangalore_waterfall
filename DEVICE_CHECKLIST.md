@@ -68,3 +68,9 @@ Open the live github.io page on each device. Tick what works; note anything odd 
 - [ ] Draw a road or move a building past the edge: the map grows with it; one Undo takes it all back.
 - [ ] Tap far (more than 60 m) past the edge: refused with a message.
 - [ ] Diagnostics switch shows fps and gesture.
+
+## 2.7.0 (blank map)
+- [ ] Main menu shows "NEW v2.7.0" and the page title ends v2.7.0.
+- [ ] Map editor, New map: choose Small / Medium / Large and *Blank land*: flat grass with no oval.
+- [ ] Draw a road, use the flag tile to set the start, Test drive: you drive on your road, no lap counter running.
+- [ ] *Blank with an oval loop* and *Copy of Hill Loop* still work; Hill Loop in Play looks and drives as before.

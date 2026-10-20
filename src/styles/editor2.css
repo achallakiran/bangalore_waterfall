@@ -27,3 +27,7 @@
 .e2-diag { position: absolute; right: 8px; bottom: 8px; padding: 4px 8px; border-radius: 8px; background: rgba(0,0,0,0.65); color: #fff; font: 11px/1.3 var(--font-mono); pointer-events: none; z-index: 6; }
 .e2-diag[hidden] { display: none; }
 .e2-fab { flex-wrap: wrap; max-width: calc(100% - 16px); }
+
+.e2-choice { display: grid; gap: 2px; text-align: left; padding: 10px 12px; }
+.e2-choice small { opacity: .75; font-size: 12px; }
+.e2-pact .btn[aria-pressed="true"] { background: var(--accent, #f2a900); color: #0d171c; }

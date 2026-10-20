@@ -83,3 +83,6 @@ building along the road (Row along road), or start a test drive next to it (Driv
 with the camera and history as they were, and the map's own start is not changed.
 Camera: drag with Look (or right-drag) to turn and tilt, Shift/Space-drag or middle-drag to slide, wheel to zoom toward the pointer; Q/E turn, R/F tilt, +/- zoom, Home resets.
 Ctrl+Z / Ctrl+Y undo and redo, Ctrl+C / Ctrl+V copy and paste a selected thing at the pointer.
+
+## Maps without the oval loop (2.7.0)
+The first road must still be of type `oval` (the format keeps one placeholder). Setting `"off": true` on it switches the loop off: it is not drawn, not driven and has no laps. A blank map also has flat terrain (every biome has one blob of strength 0), no traffic and no pads. `World.hasLoop` tells the game which kind of map it has.

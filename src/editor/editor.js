@@ -886,7 +886,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
         const e = m.roads.edges[selected.edge];
         if (e) {
           rows.push(el('h4', { text: selected.edge === 0 ? 'Oval loop' : 'Road ' + e.key }), el('p', { class: 'ed-note', text: ED.roadLength(m, selected.edge).toFixed(0) + ' m long, ' + e.profile.length + ' height points. Use the Slope tool to shape the hill.' }));
-          if (selected.edge === 0) {
+          if (selected.edge === 0 && !e.off) {
             const L = el('input', { type: 'number', min: 4, max: 200, step: 1, value: e.L }), R = el('input', { type: 'number', min: 4, max: 200, step: 1, value: e.R });
             const go = () => commit(() => ED.setOval(m, Number(L.value), Number(R.value)));
             L.addEventListener('change', go); R.addEventListener('change', go);
@@ -974,7 +974,28 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     after(true); if (note) toast(note);
     if (!slotId) { clearTimeout(saveT); }
   }
-  bNew.addEventListener('click', async () => { await flush().catch(() => {}); replaceMap(ED.newMapFrom(base, { id: 'my-map', name: 'My map' }), 'Started a new map.'); });
+  // New map: pick a size and what to start with. Blank land has no oval loop; every road is yours to draw.
+  const NEW_SIZES = [['Small', 96], ['Medium', 192], ['Large', 384]];
+  bNew.addEventListener('click', () => {
+    closeMaps();
+    let size = 192;
+    const box = el('div', { class: 'e2-panel', role: 'dialog', 'aria-label': 'New map' });
+    const shade = el('div', { class: 'e2-shade' }, box); panel = shade;
+    shade.addEventListener('click', ev => { if (ev.target === shade) closeMaps(); });
+    stage.append(shade);
+    const head = el('div', { class: 'e2-phead' }, el('h3', { text: 'New map' }), el('button', { class: 'btn', type: 'button', text: 'Close' }));
+    head.querySelector('button').addEventListener('click', closeMaps);
+    const sz = el('div', { class: 'e2-pact', 'data-new': 'size' });
+    const szb = NEW_SIZES.map(([n, v]) => { const b = el('button', { class: 'btn', type: 'button', text: n + ' ' + v + ' m', 'aria-pressed': v === size ? 'true' : 'false', 'data-size': v }); b.addEventListener('click', () => { size = v; szb.forEach(x => x.setAttribute('aria-pressed', String(Number(x.dataset.size) === size))); }); return b; });
+    sz.append(...szb);
+    const go = async (loop, label) => { closeMaps(); await flush().catch(() => {}); replaceMap(ED.blankMap(base, { id: 'my-map', name: 'My map', size, loop }), label); };
+    const mkb = (txt, sub, fn) => { const b = el('button', { class: 'btn e2-choice', type: 'button' }, el('b', { text: txt }), el('small', { text: sub })); b.addEventListener('click', fn); return b; };
+    box.append(head, el('p', { class: 'ed-note', text: 'How big should the ground be? It can be made bigger later.' }), sz,
+      el('div', { class: 'e2-list' },
+        mkb('Blank land', 'Flat open ground with no roads. Draw your own roads.', () => go(false, 'Started a blank map. Pick Roads and draw.')),
+        mkb('Blank with an oval loop', 'Flat ground with a lap track in the middle.', () => go(true, 'Started a map with an oval loop.')),
+        mkb('Copy of Hill Loop', 'The finished hill track, to change.', () => { closeMaps(); bHill.click(); })));
+  });
   bHill.addEventListener('click', async () => { await flush().catch(() => {}); replaceMap(ED.clone(base), 'Opened a copy of Hill Loop. Change the name before you save.'); });
   bOpen.addEventListener('click', () => file.click());
   file.addEventListener('change', async () => {

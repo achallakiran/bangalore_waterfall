@@ -300,5 +300,33 @@ ok(parseMap(text).meta.id === 'hill-loop', 'parseMap accepts the shipped file');
   const g = createWorld(fresh()); ok(!!g, 'grow: Hill Loop still builds');
 }
 
+// 10. F3: blank maps (no oval loop) and a blank map with an oval
+{
+  const base = fresh();
+  for (const size of [96, 192, 384]) {
+    const m = ED.blankMap(base, { id: 'blank', name: 'Blank', size, loop: false });
+    ok(validateMap(m).ok, 'blank ' + size + ': valid (' + describeErrors(validateMap(m)).slice(0, 1) + ')');
+    ok(m.slab.x1 - m.slab.x0 === size && m.roads.edges.length === 1 && m.roads.edges[0].off === true, 'blank ' + size + ': one switched-off placeholder, size ' + size);
+    const W = createWorld(m);
+    ok(W.hasLoop === false, 'blank ' + size + ': the world reports no loop');
+    let bad = 0, hs = new Set();
+    for (let x = -size / 2; x <= size / 2; x += 7) for (let z = -size / 2; z <= size / 2; z += 7) { const c = W.column(x, z, 0.2); if (!Number.isFinite(c.h) || c.kind !== W.K.GRASS) bad++; hs.add(c.h.toFixed(3)); }
+    ok(bad === 0 && hs.size === 1, 'blank ' + size + ': every column is flat grass (' + bad + ' odd, ' + hs.size + ' heights)');
+  }
+  const m = ED.blankMap(base, { size: 192, loop: false });
+  const r = ED.addRoad(m, [-40, 0], [40, 0]);
+  ok(typeof r === 'number' && validateMap(m).ok, 'blank: a road can be drawn on blank land and the map stays valid');
+  const W = createWorld(m), on = { ...W.column(0, 0, 0.2) }, off = { ...W.column(0, 20, 0.2) };
+  ok(on.kind !== W.K.GRASS && off.kind === W.K.GRASS && Number.isFinite(on.h), 'blank: the road is drawn where it was placed and the rest stays grass');
+  ok(ED.polylines(m)[0].length === 0 && ED.polylines(m)[1].length > 1, 'blank: the placeholder has no road line');
+  const r2_ = ED.addRoad(m, [0, -40], [0, 40]);
+  ok(typeof r2_ === 'number' && m.roads.junctions.length >= 1 && validateMap(m).ok, 'blank: a crossing road makes a junction');
+  ok(ED.removeRoad(m, 1) === true && validateMap(m).ok, 'blank: a road can be removed');
+  const l = ED.blankMap(base, { size: 192, loop: true });
+  ok(validateMap(l).ok && !l.roads.edges[0].off && createWorld(l).hasLoop === true, 'blank with loop: valid, loop on');
+  ok(createWorld(fresh()).hasLoop === true, 'Hill Loop still has its loop');
+  const bad = ED.blankMap(base, { size: 192 }); bad.roads.edges[0].off = 'yes'; ok(!validateMap(bad).ok, 'off must be true or false');
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nAll fast checks passed');
 process.exit(failed ? 1 : 0);
