@@ -14,6 +14,7 @@ export const DEFAULTS = {
   padScale: 1,
   units: 'kmh',     // kmh | mph
   theme: 'auto',    // auto | light | dark
+  sky: 'new',       // new | classic (classic = the old flat sky, no fog)
   budget: 'auto'    // memory budget: auto | low | medium | high (applies the next time a game starts)
 };
 

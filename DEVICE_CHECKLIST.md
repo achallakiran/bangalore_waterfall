@@ -81,3 +81,10 @@ Open the live github.io page on each device. Tick what works; note anything odd 
 - [ ] Up / Down change the height; hold repeats; one Undo takes back a whole hold.
 - [ ] Left / Right bend; a straight road becomes a curve. Step cycles Fine / Normal / Coarse. Remove works.
 - [ ] Oval loop: Left and Right are greyed out; Up and Down work.
+
+## 2.9.0 (sky and fog)
+- [ ] Menu shows "NEW v2.9.0"; page title ends v2.9.0.
+- [ ] Drive on a big (streamed) map: far ground fades into a pale horizon instead of popping in as blocks.
+- [ ] The sky is a light gradient with a sun and a few blocky clouds, in both light and dark phone mode (no dark blue band).
+- [ ] Settings > Display > Sky & fog > Classic brings back the old flat sky with no fog; New brings the sky back.
+- [ ] Hill Loop (held whole) has the new sky and no fog; nothing else about it changed.

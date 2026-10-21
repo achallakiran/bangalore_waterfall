@@ -2,6 +2,7 @@
 // Rendering, shading, physics and world are frozen; only the listed hooks differ (mount/dispose, pause, units, touch pad).
 import { createWorld } from '../../engine/world.js';
 import { budgetFor, planMemory } from '../../engine/budget.js';
+import { createSky } from './sky.js';
 
 const THREE = window.THREE;
 export function boot(hooks, map) {
@@ -362,6 +363,8 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(32, 1, 1, 340);
 const hemi = new THREE.HemisphereLight(0xcfe6ff, 0x8a7352, 0.6);
 scene.add(hemi);
+const sky = createSky(THREE, scene);   // gradient dome, sun, clouds; hidden in Classic mode
+const FOG_OFF = 1e6;
 const sun = new THREE.DirectionalLight(0xfff2dc, 0.8);
 sun.castShadow = true;
 const smap = window.innerWidth < 700 ? 1024 : 2048;
@@ -526,6 +529,13 @@ function streamPlan() {
   S.want = cand.slice(0, S.maxChunks);
   S.wantSet = new Set(S.want.map(c => c.key));
   S.eff = S.want.length ? S.want[S.want.length - 1].d : 0;
+  // Build order: chunks ahead of a moving vehicle first (what is loaded and kept is still decided by distance alone).
+  S.order = S.want;
+  if (Math.abs(P.v) > 1) {
+    const hx = Math.cos(P.psi), hz = -Math.sin(P.psi), sg = P.v >= 0 ? 1 : -1;
+    const pri = c => c.d - 10 * sg * ((g.x0 + (c.a + 0.5) * CH - px) * hx + (g.z0 + (c.b + 0.5) * CH - pz) * hz) / (c.d || 1);
+    S.order = S.want.slice().sort((p, q) => pri(p) - pri(q));
+  }
   // unload what is clearly outside the ring (with a margin so a chunk on the edge does not flicker)
   S.chunks.forEach((c, key) => {
     if (S.wantSet.has(key)) return;
@@ -550,8 +560,9 @@ function streamDropTile(key) {
 function streamPump(ms, n) {
   const S = stream, T0 = performance.now(), CH = S.grid.CH;
   let loaded = 0;
-  for (let i = 0; i < S.want.length; i++) {
-    const w = S.want[i];
+  const order = S.order || S.want;
+  for (let i = 0; i < order.length; i++) {
+    const w = order[i];
     if (S.chunks.has(w.key)) continue;
     if (loaded >= n && performance.now() - T0 > ms) return true;
     const r = World.buildChunk(S.grid, w.a, w.b);
@@ -844,6 +855,7 @@ function setSun(h) {
   hemi.intensity = 0.5 + 0.12 * Math.min(1, el / 1.0);
   hemi.color.setRGB(0.81 + 0.19 * warm, 0.9 - 0.12 * warm, 1 - 0.25 * warm);
   hemi.groundColor.setRGB(0.54, 0.45, 0.32);
+  sky.setHour(el, warm, sunOff);
 }
 const _lx = new THREE.Vector3(), _ly = new THREE.Vector3(), _dir = new THREE.Vector3(), _t = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 function followShadow(tx, ty, tz) {
@@ -1093,6 +1105,19 @@ function placeNpc(n, dt) {
   a.inner.position.y = state.traffic ? Math.abs(Math.sin(clock * 9 + n.ph)) * 0.03 : 0;
 }
 
+// Sky and fog. Fog only closes in when the ground is streamed (so ground never appears to pop in at the edge of the loaded ring);
+// it is measured from the camera, so the overview camera works too. "Classic" (hooks.sky === 'classic') leaves the old look.
+function skyFrame(dt) {
+  const on = hooks.sky !== 'classic';
+  if (sky.enabled !== on) sky.setEnabled(on);
+  if (!on || !stream || !stream.eff) { scene.fog = null; if (on) sky.update(camera, dt); return; }
+  const cd = camera.position.distanceTo(_fogP.set(P.x, P.y, P.z)), eff = stream.eff;
+  if (!scene.fog) scene.fog = new THREE.Fog(0xffffff, 10, 100);
+  scene.fog.color.copy(sky.horizon);
+  scene.fog.near = cd + eff * 0.45; scene.fog.far = cd + eff * 0.93;
+  sky.update(camera, dt);
+}
+const _fogP = new THREE.Vector3();
 function frame(now) {
   if (!alive) return;
   if (state.paused) { last = now; rafId = requestAnimationFrame(frame); return; }
@@ -1138,6 +1163,7 @@ function frame(now) {
   if (stream) streamTick();
   for (let i = 0; i < groundChunks.length; i++) groundChunks[i].mesh.visible = frustum.intersectsBox(groundChunks[i].box);
 
+  skyFrame(dt);
   renderer.shadowMap.needsUpdate = true;
   renderer.setRenderTarget(null);
   renderer.render(scene, camera);
@@ -1182,7 +1208,7 @@ const api = {
   resize
 };
 function dispose() {
-  alive = false; buildId++; stream = null;
+  alive = false; buildId++; stream = null; try { sky.dispose(); } catch (e) {}
   cancelAnimationFrame(rafId); clearTimeout(rebuildTimer);
   _L.forEach(([t, e, f, o]) => t.removeEventListener(e, f, o)); _L.length = 0;
   try { audioOff(); if (actx) actx.close(); } catch (e) {}
@@ -1198,7 +1224,7 @@ function dispose() {
   } catch (e) {}
   if (window.__loop === dbg) delete window.__loop;
 }
-const dbg = { get memory() { return api.memory; }, buildObjects, pushOut, inside, P, lap, state, SOLIDS, World, start, setCam, keys, A, gY, NPC, VEH, get HF() { return HF; }, potholeHit, setKind, step, inp, resetRun, lapUpdate };
+const dbg = { get memory() { return api.memory; }, buildObjects, pushOut, inside, P, lap, state, SOLIDS, World, start, setCam, keys, A, gY, NPC, VEH, get HF() { return HF; }, potholeHit, setKind, step, inp, resetRun, lapUpdate, get fog() { return scene.fog; }, get skyOn() { return sky.enabled; }, get order() { return stream && stream.order; } };
 window.__loop = dbg;
 return { api, dispose, debug: dbg };
 
