@@ -1061,7 +1061,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
         mkb('Blank with an oval loop', 'Flat ground with a lap track in the middle.', () => go(true, 'Started a map with an oval loop.')),
         mkb('Copy of Hill Loop', 'The finished hill track, to change.', () => { closeMaps(); bHill.click(); })));
   });
-  bHill.addEventListener('click', async () => { await flush().catch(() => {}); replaceMap(ED.clone(base), 'Opened a copy of Hill Loop. Change the name before you save.'); });
+  bHill.addEventListener('click', async () => { await flush().catch(() => {}); replaceMap((() => { const c = ED.clone(base); delete c.edgeSlow; return c; })(), 'Opened a copy of Hill Loop. Change the name before you save.'); });
   bOpen.addEventListener('click', () => file.click());
   file.addEventListener('change', async () => {
     const f = file.files && file.files[0]; file.value = ''; if (!f) return;

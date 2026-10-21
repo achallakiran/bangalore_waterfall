@@ -88,3 +88,11 @@ Open the live github.io page on each device. Tick what works; note anything odd 
 - [ ] The sky is a light gradient with a sun and a few blocky clouds, in both light and dark phone mode (no dark blue band).
 - [ ] Settings > Display > Sky & fog > Classic brings back the old flat sky with no fog; New brings the sky back.
 - [ ] Hill Loop (held whole) has the new sky and no fog; nothing else about it changed.
+
+## 2.9.1 and 2.9.2 (map edge, cliff falls)
+- [ ] Menu shows "NEW v2.9.2"; page title ends v2.9.2.
+- [ ] Drive at the edge of a map you made in the editor: rolling hills beyond the edge, you slow down gently, "Edge of the map: turn back" shows, and turning back is not slowed.
+- [ ] The built-in Hill Loop drives as before near its edges (no slow-down).
+- [ ] In the editor raise a block of ground, test-drive off its edge: the car leaves the ground, the nose drops, it lands with a jolt. A very high drop puts you back on the last road with "Fell off: back on the road".
+- [ ] Ordinary road, curbs, speed breakers and potholes never make the car fly.
+- [ ] Settings > Cliff falls > Off: the car hugs the ground again. Sky, fog & edge > Classic: flat old sky, no fog, no hills.

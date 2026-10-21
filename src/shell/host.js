@@ -19,7 +19,7 @@ export function createHost({ root, tpl }) {
     root.append(tpl.content.cloneNode(true));
     const r = settings.resolve();
     const qs = new URLSearchParams(location.search); // ?stream=1 and ?cubes=N force streaming with a given budget (tests)
-    hooks = { sky: r.sky, units: r.units, hour: r.hour, vox: r.vox, lite: r.lite, traffic: r.traffic, budget: Number(qs.get('cubes')) || r.budget, forceStream: qs.get('stream') === '1' };
+    hooks = { fall: r.fall, sky: r.sky, units: r.units, hour: r.hour, vox: r.vox, lite: r.lite, traffic: r.traffic, budget: Number(qs.get('cubes')) || r.budget, forceStream: qs.get('stream') === '1' };
     q('unit').textContent = r.units === 'mph' ? 'mph' : 'km/h';
     let g;
     try { g = boot(hooks, map); } catch (e) { console.error(e); g = null; }
@@ -55,6 +55,7 @@ export function createHost({ root, tpl }) {
       setToggle('bPad', want);
     }
     if ('sky' in patch || patch.__reset) hooks.sky = r.sky;
+    if ('fall' in patch || patch.__reset) hooks.fall = r.fall;
     if ('units' in patch || patch.__reset) { hooks.units = r.units; const u = q('unit'); if (u) u.textContent = r.units === 'mph' ? 'mph' : 'km/h'; }
   }
 

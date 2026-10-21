@@ -1,6 +1,7 @@
 {
  "format": "hill-loop-map",
  "version": 1,
+  "edgeSlow": false,
  "meta": {"id":"hill-loop","name":"Hill Loop Track","author":"Hill Loop Track","description":"The oval climbs round the east end, with cross roads, rock, scrub, a lake and potholes.","scale":"game"},
  "slab": {"x0":-42,"x1":42,"z0":-48,"z1":18},
  "ground": {"layer":0.25,"chunk":12},

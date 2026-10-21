@@ -41,6 +41,7 @@ export function newMapFrom(base, { id = 'my-map', name = 'My map' } = {}) {
 // loop = true gives the oval back, in the middle of the map. size is the side in metres.
 export function blankMap(base, { id = 'my-map', name = 'My map', size = 192, loop = false } = {}) {
   const m = newMapFrom(base, { id, name });
+  delete m.edgeSlow;   // new maps slow down near the edge (the original Hill Loop file switches it off)
   const h = Math.round(size / 2);
   m.slab = { x0: -h, x1: h, z0: -h, z1: h };
   const e = m.roads.edges[0];

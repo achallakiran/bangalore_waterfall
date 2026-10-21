@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>Hill Loop Track v2.9.0</title>
+<title>Hill Loop Track v2.9.2</title>
 <meta name="description" content="A voxel driving game on a climbing Bangalore-style road loop with cross roads and potholes. Drive a car or a bike.">
 <meta name="theme-color" content="#E8EFF1" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0D171C" media="(prefers-color-scheme: dark)">
@@ -28,7 +28,7 @@
     <div class="menu">
       <header>
         <h1 id="titleH">Hill Loop Track</h1>
-        <p>NEW v2.9.0: a real sky, and fog that hides the ground loading in</p>
+        <p>NEW v2.9.2: drive off a cliff and you fall, plus sky, fog and map-edge hills</p>
       </header>
       <nav class="list" aria-label="Main menu">
         <button class="mbtn primary" type="button" id="mPlay">Play <small>Hill Loop</small></button>
@@ -111,7 +111,8 @@
         <h3>Display</h3>
         <div class="rowline"><span>Memory budget</span><span class="seg" data-seg="budget"><button type="button" data-val="auto" aria-pressed="true">Auto</button><button type="button" data-val="low" aria-pressed="false">Low</button><button type="button" data-val="medium" aria-pressed="false">Medium</button><button type="button" data-val="high" aria-pressed="false">High</button></span></div>
         <div class="rowline"><span>Speed units</span><span class="seg" data-seg="units"><button type="button" data-val="kmh" aria-pressed="true">km/h</button><button type="button" data-val="mph" aria-pressed="false">mph</button></span></div>
-        <div class="rowline"><span>Sky &amp; fog</span><span class="seg" data-seg="sky"><button type="button" data-val="new" aria-pressed="true">New</button><button type="button" data-val="classic" aria-pressed="false">Classic</button></span></div>
+        <div class="rowline"><span>Cliff falls</span><span class="seg" data-seg="fall"><button type="button" data-val="on" aria-pressed="true">On</button><button type="button" data-val="off" aria-pressed="false">Off</button></span></div>
+        <div class="rowline"><span>Sky, fog &amp; edge</span><span class="seg" data-seg="sky"><button type="button" data-val="new" aria-pressed="true">New</button><button type="button" data-val="classic" aria-pressed="false">Classic</button></span></div>
         <div class="rowline"><span>Theme</span><span class="seg" data-seg="theme"><button type="button" data-val="auto" aria-pressed="true">Auto</button><button type="button" data-val="light" aria-pressed="false">Light</button><button type="button" data-val="dark" aria-pressed="false">Dark</button></span></div>
         <div class="btns">
           <button class="btn" type="button" id="sFull">Full screen</button>
@@ -195,6 +196,8 @@
         </div>
         <div class="pill warn" id="wrong" hidden>Wrong way</div>
         <div class="pill warn" id="potwarn" hidden>Pothole!</div>
+        <div class="pill warn" id="edgewarn" hidden>Edge of the map: turn back</div>
+        <div class="pill warn" id="fallwarn" hidden>Fell off: back on the road</div>
         <canvas class="mini" id="mini" width="264" height="208" aria-label="Track map"></canvas>
       </div>
     </div>

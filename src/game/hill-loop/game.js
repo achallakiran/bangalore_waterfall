@@ -3,6 +3,7 @@
 import { createWorld } from '../../engine/world.js';
 import { budgetFor, planMemory } from '../../engine/budget.js';
 import { createSky } from './sky.js';
+import { createEdge } from './edge.js';
 
 const THREE = window.THREE;
 export function boot(hooks, map) {
@@ -364,7 +365,7 @@ const camera = new THREE.PerspectiveCamera(32, 1, 1, 340);
 const hemi = new THREE.HemisphereLight(0xcfe6ff, 0x8a7352, 0.6);
 scene.add(hemi);
 const sky = createSky(THREE, scene);   // gradient dome, sun, clouds; hidden in Classic mode
-const FOG_OFF = 1e6;
+const edge = createEdge(THREE, scene, World);   // hills round the map edge, plus the slow-down near the wall
 const sun = new THREE.DirectionalLight(0xfff2dc, 0.8);
 sun.castShadow = true;
 const smap = window.innerWidth < 700 ? 1024 : 2048;
@@ -618,13 +619,13 @@ function applyVisibility() {
 
 // ===== Player, traffic, lap logic =====
 let kind = 'car';
-const P = { x: map.start.x, z: map.start.z, psi: map.start.psi, v: 0, steer: 0, y: 0, pitch: 0, roll: 0, acc: 0, hit: false, jy: 0, jv: 0, wobA: 0, wobT: 9, wobRoll: 0, pot: 0, potMsg: 0 };
+const P = { x: map.start.x, z: map.start.z, psi: map.start.psi, v: 0, steer: 0, y: 0, pitch: 0, roll: 0, acc: 0, hit: false, jy: 0, jv: 0, wobA: 0, wobT: 9, wobRoll: 0, pot: 0, potMsg: 0, air: false, vy: 0, vyG: 0, by: null, fallMsg: 0, safeT: 0, safe: { x: map.start.x, z: map.start.z, psi: map.start.psi } };
 const lap = { prog: -1.5, prevS: 0, n: 0, idx: -1, t0: -1, time: 0, last: -1, wrong: 0 };
 const best = { car: 0, bike: 0 };
 try { const b = JSON.parse(localStorage.getItem('loop-hills-best') || '{}'); best.car = b.car || 0; best.bike = b.bike || 0; } catch (e) {}
 const NPC = map.traffic.map(n => ({ key: n.key, s: n.s, dir: n.dir, u: n.u, speed: n.speed, r: n.r, ph: n.ph, y: 0, pitch: 0 }));
 const potState = [-1, -1, -1, -1], recent = new Map();
-function snapPlayer() { if (stream) streamSync(); P.y = gY(P.x, P.z); NPC.forEach(n => { n.y = null; }); snapCam = true; }
+function snapPlayer() { if (stream) streamSync(); P.y = gY(P.x, P.z); P.by = P.y; P.air = false; P.vy = 0; P.vyG = 0; NPC.forEach(n => { n.y = null; }); snapCam = true; }
 function resetRun() {
   P.x = map.start.x; P.z = map.start.z; P.psi = map.start.psi; P.v = 0; P.steer = 0; P.pitch = 0; P.roll = 0; P.jy = P.jv = 0; P.wobA = 0; P.wobT = 9; P.pot = 0;
   potState.fill(-1); recent.clear();
@@ -687,21 +688,69 @@ function potholeHit(pi, wheelIdx, side) {
   thump(sev);
 }
 
+// ===== Falling. The vehicle normally follows the ground exactly. When the ground drops away steeper than it could follow
+// (a cliff edge, a ledge) it leaves the ground, keeps its speed, falls under gravity and lands with a jolt. A very long fall
+// puts it back on the last road it was on. Curbs, speed breakers, potholes and ordinary slopes never trigger it.
+// Settings > Cliff falls > Off restores the old behaviour (ground-hugging everywhere).
+const EDGE_SLOW = map.edgeSlow !== false;   // the original Hill Loop file says false, so it drives exactly as it always did
+const FALL = { g: 20, slope: 1.2, crash: 22 };   // slope: steepest ground-height drop per metre travelled that the four-wheel average can follow
+function fallReset() {
+  const s = P.safe;
+  P.x = s.x; P.z = s.z; P.psi = s.psi; P.v = 0; P.steer = 0; P.pitch = 0; P.roll = 0; P.jy = P.jv = 0; P.air = false; P.vy = 0;
+  snapPlayer(); P.by = P.y; P.fallMsg = 1.8; shake = 0.5;
+}
+function fallStep(dt) {
+  const g = P.gy;
+  P.lx = P.x; P.lz = P.z;
+  if (hooks.fall === 'off' || !isFinite(g)) { P.air = false; P.by = g; return; }
+  if (P.by === null || P.by === undefined) P.by = g;
+  if (!P.air) {
+    const drop = P.by - g, ds = Math.abs(P.v) * dt;
+    if (drop > 0.03 && drop > ds * FALL.slope + 0.01) { P.air = true; P.vy = Math.min(0, P.vyG); }
+    else {
+      P.vyG = clamp((g - P.by) / dt, -8, 8); P.by = g;
+      P.safeT -= dt;
+      if (P.safeT <= 0 && gKind(P.x, P.z) === K.ROAD) { P.safe.x = P.x; P.safe.z = P.z; P.safe.psi = P.psi; P.safeT = 0.4; }
+      return;
+    }
+  }
+  P.vy -= FALL.g * dt; P.by += P.vy * dt;
+  if (P.by < World.Y_MIN - 8) { fallReset(); return; }
+  if (P.by <= g) {
+    const impact = -P.vy;
+    P.by = g; P.air = false; P.vy = 0; P.vyG = 0;
+    if (impact > FALL.crash) { fallReset(); return; }
+    if (impact > 2.5) {
+      const sev = clamp(impact / 10, 0.2, 1.6);
+      P.jv += 2.6 * sev; shake = Math.max(shake, 0.1 + 0.25 * sev);
+      P.v *= 1 - Math.min(0.4, 0.04 * Math.max(0, impact - 3));
+      thump(sev);
+    }
+  }
+}
+
 function step(dt, ctl) {
   const sp = VEH[kind];
+  // A jump of more than 2 m between steps is a teleport (start, reset, a test placing the vehicle): forget the old body height.
+  if (P.lx !== undefined && (Math.abs(P.x - P.lx) > 2 || Math.abs(P.z - P.lz) > 2)) { P.by = null; P.air = false; P.vy = 0; P.vyG = 0; }
   const surf = World.MULT[gKind(P.x, P.z)];
   const vmax = sp.maxF * surf, rmax = sp.maxR * surf;
   const thr = (ctl.up ? 1 : 0) - (ctl.down ? 1 : 0);
   const vPrev = P.v;
+  if (!P.air) {   // in the air nothing pushes the vehicle: it keeps its speed until it lands
   if (ctl.up) { if (P.v >= 0) P.v += sp.acc * clamp(1 - P.v / vmax, -3, 1) * dt; else P.v += sp.brk * dt; }
   else if (ctl.down) { if (P.v > 0.3) P.v -= sp.brk * dt; else P.v = Math.max(P.v - sp.acc * 0.6 * dt, -rmax); }
   if (!thr) { const dr = 1.2 + 0.05 * Math.abs(P.v); P.v -= Math.sign(P.v) * Math.min(Math.abs(P.v), dr * dt); }
   if (P.v > vmax) P.v -= (P.v - vmax) * Math.min(1, 3 * dt);
   if (P.v < -rmax) P.v -= (P.v + rmax) * Math.min(1, 3 * dt);
   if (ctl.hb) P.v -= Math.sign(P.v) * Math.min(Math.abs(P.v), 18 * dt);
+  // Near the edge of the map a vehicle driving over open ground and heading at it slows down smoothly (turning back is not slowed; maps may switch it off with edgeSlow: false), so the wall is rarely hit hard.
+  { const e = edge.probe(P.x, P.z, Math.cos(P.psi) * P.v, -Math.sin(P.psi) * P.v); P.edge = e.f; P.edgeOut = e.away;
+    if (e.away > 0 && EDGE_SLOW) P.v *= Math.exp(-3.2 * e.away * e.away * dt); }
   // gravity along the slope: uphill bleeds speed, downhill gives it back; a gentle slope holds a parked vehicle
   const g = 9.8 * 0.55 * Math.sin(P.pitch);
   if (!(thr === 0 && Math.abs(P.v) < 0.5 && Math.abs(P.pitch) < 0.08)) P.v -= g * dt; else P.v = 0;
+  }
 
   const tgt = (ctl.left ? 1 : 0) - (ctl.right ? 1 : 0);
   P.steer += (tgt - P.steer) * Math.min(1, dt * 9);
@@ -710,7 +759,7 @@ function step(dt, ctl) {
   const t = clamp(Math.abs(P.v) / sp.maxF, 0, 1);
   const delta = P.steer * lerp(sp.sMax, sp.sMin, Math.pow(t, 0.7)) + wob * (0.4 + 0.6 * t);
   P.wobRoll = wob * (kind === 'bike' ? 1.6 : 0.6);
-  const yaw = P.v / sp.wb * Math.tan(delta) * (ctl.hb ? 1.4 : 1);
+  const yaw = P.v / sp.wb * Math.tan(delta) * (ctl.hb ? 1.4 : 1) * (P.air ? 0.2 : 1);
   const px0 = P.x, pz0 = P.z;
   P.psi += yaw * dt;
   P.x += Math.cos(P.psi) * P.v * dt;
@@ -719,7 +768,9 @@ function step(dt, ctl) {
   // Collisions: a few circles along the body against buildings, trees, poles and other traffic; steep faces are walls.
   let hit = false;
   const fx = Math.cos(P.psi), fz = -Math.sin(P.psi);
-  const yHere = gY(px0, pz0);
+  // The steep-face wall compares the ground ahead with the vehicle's own height (so a car leaving a cliff edge is not held by the lip it is
+  // driving off). With Cliff falls off it is the ground under the centre, exactly as before.
+  const yHere = (hooks.fall === 'off' || P.by === null || P.by === undefined) ? gY(px0, pz0) : P.by;
   for (let c = 0; c < sp.circ.length; c++) {
     const cx = P.x + fx * sp.circ[c], cz = P.z + fz * sp.circ[c];
     if (gY(cx, cz) - yHere > 0.85) { P.x = px0; P.z = pz0; hit = true; break; }
@@ -762,11 +813,12 @@ function step(dt, ctl) {
     potState[i] = pi;
   }
   const half = ws[0][0];
-  const pitchT = Math.atan2(fy / fn - ry / rn, 2 * half);
+  const pitchT = P.air ? clamp(Math.atan2(P.vy, Math.max(Math.abs(P.v), 4)), -0.7, 0.3) : Math.atan2(fy / fn - ry / rn, 2 * half);
   P.pitch = lerp(P.pitch, pitchT, Math.min(1, dt * 10));
-  const rollT = rtn && ln ? -Math.atan2(rty / rtn - ly / ln, 1.44) : 0;
+  const rollT = !P.air && rtn && ln ? -Math.atan2(rty / rtn - ly / ln, 1.44) : 0;
   P.roll = lerp(P.roll, rollT, Math.min(1, dt * 10));
   P.gy = ysum / ws.length;
+  fallStep(dt);
   P.acc = lerp(P.acc, clamp((P.v - vPrev) / dt, -10, 10), 0.2);
   // jolt spring
   P.jv += (-180 * P.jy - 14 * P.jv) * dt; P.jy = clamp(P.jy + P.jv * dt, -0.05, 0.3);
@@ -1109,7 +1161,7 @@ function placeNpc(n, dt) {
 // it is measured from the camera, so the overview camera works too. "Classic" (hooks.sky === 'classic') leaves the old look.
 function skyFrame(dt) {
   const on = hooks.sky !== 'classic';
-  if (sky.enabled !== on) sky.setEnabled(on);
+  if (sky.enabled !== on) { sky.setEnabled(on); edge.setVisible(on); }
   if (!on || !stream || !stream.eff) { scene.fog = null; if (on) sky.update(camera, dt); return; }
   const cd = camera.position.distanceTo(_fogP.set(P.x, P.y, P.z)), eff = stream.eff;
   if (!scene.fog) scene.fog = new THREE.Fog(0xffffff, 10, 100);
@@ -1142,7 +1194,7 @@ function frame(now) {
 
   const pa = kind === 'car' ? A.pCar : A.pBike, sp = VEH[kind];
   const target = P.gy !== undefined ? P.gy : gY(P.x, P.z);
-  P.y = lerp(P.y, target, Math.min(1, dt * 14));
+  if (P.air) P.y = P.by; else P.y = lerp(P.y, target, Math.min(1, dt * 14));
   const frac = clamp(Math.abs(P.v) / sp.maxF, 0, 1);
   pa.root.position.set(P.x, P.y + P.jy, P.z);
   pa.root.rotation.y = P.psi;
@@ -1180,6 +1232,9 @@ function frame(now) {
   const w = playing && lap.wrong > 0.6, pm2 = P.potMsg > 0;
   if ($('wrong').hidden === w) $('wrong').hidden = !w;
   if ($('potwarn').hidden === pm2) $('potwarn').hidden = !pm2;
+  P.fallMsg = Math.max(0, P.fallMsg - dt);
+  { const fw = $('fallwarn'), wf = P.fallMsg > 0; if (fw && fw.hidden === wf) fw.hidden = !wf; }
+  { const ew = $('edgewarn'), want = state.phase === 'play' && (P.edgeOut || 0) > 0.25; if (ew && ew.hidden === want) ew.hidden = !want; }
   hudT += dt;
   if (hudT > 0.05) { hudT = 0; drawMini(); updateBest(); if (stream) setText('sStat', streamLine()); }
   audioTick();
@@ -1208,7 +1263,7 @@ const api = {
   resize
 };
 function dispose() {
-  alive = false; buildId++; stream = null; try { sky.dispose(); } catch (e) {}
+  alive = false; buildId++; stream = null; try { sky.dispose(); edge.dispose(); } catch (e) {}
   cancelAnimationFrame(rafId); clearTimeout(rebuildTimer);
   _L.forEach(([t, e, f, o]) => t.removeEventListener(e, f, o)); _L.length = 0;
   try { audioOff(); if (actx) actx.close(); } catch (e) {}
@@ -1224,7 +1279,7 @@ function dispose() {
   } catch (e) {}
   if (window.__loop === dbg) delete window.__loop;
 }
-const dbg = { get memory() { return api.memory; }, buildObjects, pushOut, inside, P, lap, state, SOLIDS, World, start, setCam, keys, A, gY, NPC, VEH, get HF() { return HF; }, potholeHit, setKind, step, inp, resetRun, lapUpdate, get fog() { return scene.fog; }, get skyOn() { return sky.enabled; }, get order() { return stream && stream.order; } };
+const dbg = { get memory() { return api.memory; }, buildObjects, pushOut, inside, P, lap, state, SOLIDS, World, start, setCam, keys, A, gY, NPC, VEH, get HF() { return HF; }, potholeHit, setKind, step, inp, resetRun, lapUpdate, edge, FALL, fallReset, get kind() { return kind; }, get fog() { return scene.fog; }, get skyOn() { return sky.enabled; }, get order() { return stream && stream.order; } };
 window.__loop = dbg;
 return { api, dispose, debug: dbg };
 
