@@ -1,6 +1,6 @@
 {
   "name": "hill-loop-v2",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "private": true,
   "type": "module",
   "description": "Hill Loop Track v2: voxel hill-road driving game (shell, install, controls)",
@@ -19,7 +19,8 @@
     "test:editor-classic": "node tests/editor-classic.mjs",
     "test:editor2": "node tests/editor2.mjs",
     "test:touch": "node tests/touch.mjs",
-    "test:blank": "node tests/blank.mjs"
+    "test:blank": "node tests/blank.mjs",
+    "test:shape": "node tests/shape.mjs"
   },
   "devDependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.1.0",

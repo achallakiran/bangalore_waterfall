@@ -65,7 +65,14 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   const savedTag = el('span', { class: 'e2-saved', 'aria-live': 'polite' });
   const fab = el('div', { class: 'e2-fab', role: 'toolbar', 'aria-label': 'Undo, redo, hand, fit and maps' }, fabUndo, fabRedo, fabHand, fabFit, fabMaps, savedTag);
   const diagBox = el('div', { class: 'e2-diag', hidden: true, 'aria-live': 'off' });
-  const stage = el('div', { class: 'ed-stage' }, cv, nav, status, fab, diagBox);
+  // Shape panel: shown when a road is selected. Up and down change the height at the marker, left and right bend the road there.
+  const shapeBtn = (txt, act, tip) => el('button', { class: 'e2-sbtn', type: 'button', 'data-shape': act, title: tip, 'aria-label': tip, text: txt });
+  const sbL = shapeBtn('\u25C0', 'left', 'Bend the road to the left here'), sbR = shapeBtn('\u25B6', 'right', 'Bend the road to the right here'), sbU = shapeBtn('\u25B2', 'up', 'Raise the road here'), sbD = shapeBtn('\u25BC', 'down', 'Lower the road here');
+  const sbRem = el('button', { class: 'e2-sbtn e2-sbtn-s', type: 'button', 'data-shape': 'remove', title: 'Remove the shape point at the marker', text: 'Remove' });
+  const sbStep = el('button', { class: 'e2-sbtn e2-sbtn-s', type: 'button', 'data-shape': 'step', title: 'Size of each press', text: 'Normal' });
+  const shapeInfo = el('div', { class: 'e2-sinfo' });
+  const shapeBox = el('div', { class: 'e2-shape', hidden: true, role: 'group', 'aria-label': 'Shape the road at the marker' }, shapeInfo, el('div', { class: 'e2-srow' }, sbL, sbD, sbU, sbR, sbStep, sbRem));
+  const stage = el('div', { class: 'ed-stage' }, cv, nav, status, fab, shapeBox, diagBox);
   root.replaceChildren(top, el('div', { class: 'ed-body' }, stage, side), file);
 
   // ---------- the picture tray ----------
@@ -119,8 +126,8 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     draw();
     clearTimeout(saveT); saveT = setTimeout(autosave, 800);
   }
-  function undo() { if (!st.undo.length) return; const lab = st.undoL.pop(); st.redo.push(snap()); st.redoL.push(lab); st.map = JSON.parse(st.undo.pop()); selected = null; st.dirty = true; after(true); toast('Undid: ' + lab); }
-  function redo() { if (!st.redo.length) return; const lab = st.redoL.pop(); st.undo.push(snap()); st.undoL.push(lab); st.map = JSON.parse(st.redo.pop()); selected = null; st.dirty = true; after(true); toast('Redid: ' + lab); }
+  function undo() { if (!st.undo.length) return; const lab = st.undoL.pop(); st.redo.push(snap()); st.redoL.push(lab); const keepRoad = selected && selected.kind === 'road' ? Object.assign({}, selected) : null; st.map = JSON.parse(st.undo.pop()); selected = keepRoad && st.map.roads.edges[keepRoad.edge] ? keepRoad : null; st.dirty = true; after(true); toast('Undid: ' + lab); }
+  function redo() { if (!st.redo.length) return; const lab = st.redoL.pop(); st.undo.push(snap()); st.undoL.push(lab); const keepRoad = selected && selected.kind === 'road' ? Object.assign({}, selected) : null; st.map = JSON.parse(st.redo.pop()); selected = keepRoad && st.map.roads.edges[keepRoad.edge] ? keepRoad : null; st.dirty = true; after(true); toast('Redid: ' + lab); }
   // ---- saving: into this map's slot (IndexedDB); a plain local draft is the fallback when slots are not available ----
   let thumbAt = 0, slotsOk = Store.available(), saving = Promise.resolve();
   function thumbNow(force) {
@@ -306,7 +313,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     tool = id; tile = tt || BASIC[0]; drag = null; curvePts = []; if (handOn) setHand(false);
     Object.assign(opts, tile.set || {});
     root.querySelectorAll('.ed-tool').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tile === tile.id)));
-    hint.textContent = tile.tip || '';
+    hint.textContent = tile.tip || ''; hintShape = false;
     buildOpts(); draw();
     activeCanvas().style.cursor = id === 'pan' ? 'grab' : id === 'select' ? 'default' : 'crosshair';
   }
@@ -457,9 +464,9 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     if (v3) v3.invalidate(box || null, true, st.map); else draw();
     return r;
   }
-  function endLive(before, groundBox) {
+  function endLive(before, groundBox, label) {
     if (snap() === before) return false;
-    pushUndo(before, labelNow()); st.dirty = true;
+    pushUndo(before, label || labelNow()); st.dirty = true;
     check(); refreshUi(); draw();
     clearTimeout(saveT); saveT = setTimeout(autosave, 800);
     return true;
@@ -524,6 +531,10 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     m.roads.edges.forEach((e, i) => {
       const pts = lines[i], selRoad = selected && selected.kind === 'road' && selected.edge === i;
       if (selRoad) ov.drape(pts.map(p => [p[0], p[1]]), 0xffffff, 0.5);
+      if (selRoad && tool === 'select') {
+        const sf = ED.roadFrame(m, i, selected.t != null ? selected.t : 0, lines);
+        if (sf) { const sh = v3.world.edgeH(i, selected.t || 0); ov.drape([[sf.x, sf.z], [sf.x + sf.dx * 4, sf.z + sf.dz * 4]], 0xF2A900, 0.9); ov.dot(sf.x + sf.dx * 4, sh + 1.4, sf.z + sf.dz * 4, 0xF2A900, 0.35); ov.ring(sf.x, sf.z, 1.6, 0xffffff, 0.9); ov.dot(sf.x, sh + 1.6, sf.z, 0xffffff, 0.7); }
+      }
       if (selRoad || tool === 'slope') e.profile.forEach(p => { const q = pointAt(pts, p[0]); ov.dot(q[0], (v3.world.edgeH(i, p[0])) + 1.2, q[1], 0xF2A900, 0.45); });
       if (e.type === 'curve' && (selRoad || tool === 'road')) e.pts.forEach(p => ov.dot(p[0], v3.groundH(p[0], p[1]) + 0.9, p[1], 0x35c4ff, 0.4));
     });
@@ -871,7 +882,61 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     else commit(() => ED.removeById(st.map, selected.id), false);
     selected = null; refreshUi();
   }
+  // ---------- shape point ----------
+  let shapeStep = 'normal', hintShape = false;
+  const STEP_NAMES = { fine: 'Fine', normal: 'Normal', coarse: 'Coarse' };
+  function shapeTarget() { return selected && selected.kind === 'road' && st.map.roads.edges[selected.edge] && tool === 'select' ? selected : null; }
+  function shapeUpdate() {
+    const sel = shapeTarget();
+    shapeBox.hidden = !sel;
+    if (!sel) { if (hintShape) { hintShape = false; hint.textContent = tile.tip || ''; } return; }
+    if (!hintShape) { hintShape = true; hint.textContent = 'Up and down change the slope at the gold marker. Left and right bend the road there.'; }
+    const m = st.map, e = m.roads.edges[sel.edge], len = ED.roadLength(m, sel.edge);
+    if (sel.t == null) sel.t = len / 2;
+    sel.t = clamp(sel.t, 0, len);
+    const h = ED.roadHeightAt(m, sel.edge, sel.t), h2 = ED.roadHeightAt(m, sel.edge, Math.min(len, sel.t + 3)), h1 = ED.roadHeightAt(m, sel.edge, Math.max(0, sel.t - 3)), run = Math.min(len, sel.t + 3) - Math.max(0, sel.t - 3);
+    const slope = run > 0 ? (h2 - h1) / run * 100 : 0, off = sel.edge === 0 && e.off;
+    shapeInfo.textContent = (sel.edge === 0 ? 'Oval loop' : 'Road ' + e.key) + ' \u00B7 height ' + h.toFixed(1) + ' m \u00B7 slope ' + (slope >= 0 ? '+' : '') + slope.toFixed(0) + '%' + (sel.edge === 0 ? ' \u00B7 can only go up and down' : '');
+    sbL.disabled = sbR.disabled = sel.edge === 0; sbU.disabled = sbD.disabled = !!off;
+    sbStep.textContent = STEP_NAMES[shapeStep];
+  }
+  let shapeHold = null;
+  function shapeApply(act) {
+    const sel = shapeTarget(); if (!sel) return false;
+    const stp = ED.SHAPE_STEPS[shapeStep];
+    if (act === 'remove') { return commit(() => ED.removeShapePoint(st.map, sel.edge, sel.t), true, null, 'Remove shape point') !== false; }
+    let r;
+    const rb = () => { const ln = ED.polylines(st.map)[sel.edge] || []; if (!ln.length) return null; let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; ln.forEach(p => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }); return [x0 - 12, z0 - 12, x1 + 12, z1 + 12]; };
+    const box = rb();
+    if (act === 'up' || act === 'down') r = liveApply(m => ED.shapeHeight(m, sel.edge, sel.t, (act === 'up' ? 1 : -1) * stp.h), box);
+    else r = liveApply(m => { const q = ED.bendAt(m, sel.edge, sel.t, act === 'left' ? 1 : -1, stp.bend); if (q && typeof q === 'object') { lines = null; sel.t = ED.roadParam(m, sel.edge, q.x, q.z); return true; } return q; }, box);
+    if (typeof r === 'string') { toast(r.slice(1)); return false; }
+    shapeUpdate(); draw(); return true;
+  }
+  function shapePress(ev, act) {
+    ev.preventDefault(); ev.stopPropagation();
+    if (act === 'step') { shapeStep = shapeStep === 'normal' ? 'fine' : shapeStep === 'fine' ? 'coarse' : 'normal'; shapeUpdate(); return; }
+    if (act === 'remove') { shapeApply('remove'); return; }
+    const before = snap(), label = act === 'up' || act === 'down' ? 'Change slope' : 'Bend road';
+    if (!shapeApply(act)) return;
+    const hold = { before, label, t0: setTimeout(() => { hold.iv = setInterval(() => { if (!shapeApply(act)) shapeRelease(); }, 120); }, 380) };
+    shapeHold = hold;
+  }
+  function shapeRelease() {
+    const h = shapeHold; if (!h) return; shapeHold = null;
+    clearTimeout(h.t0); clearInterval(h.iv);
+    if (endLive(h.before, null, h.label)) { after(true, null); }
+    shapeUpdate();
+  }
+  [sbL, sbR, sbU, sbD, sbRem, sbStep].forEach(b => {
+    b.addEventListener('pointerdown', ev => shapePress(ev, b.dataset.shape));
+    ['pointerup', 'pointercancel', 'pointerleave', 'lostpointercapture'].forEach(n => b.addEventListener(n, shapeRelease));
+    b.addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); });
+    b.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); const a = b.dataset.shape; if (a === 'step' || a === 'remove') shapePress(ev, a); else { const before = snap(); if (shapeApply(a)) endLive(before, null, a === 'up' || a === 'down' ? 'Change slope' : 'Bend road'), after(true, null); } } });
+  });
+
   function refreshUi() {
+    shapeUpdate();
     bUndo.disabled = !st.undo.length; bRedo.disabled = !st.redo.length;
     fabUndo.disabled = bUndo.disabled; fabRedo.disabled = bRedo.disabled;
     fabUndo.title = st.undo.length ? 'Undo: ' + st.undoL[st.undoL.length - 1] : 'Nothing to undo'; fabRedo.title = st.redo.length ? 'Redo: ' + st.redoL[st.redoL.length - 1] : 'Nothing to redo';

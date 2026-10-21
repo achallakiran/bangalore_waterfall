@@ -2,7 +2,7 @@
 // Every operation edits the map it is given and returns what it made (or a string starting with "!" that explains why not).
 // Things the editor creates carry an "id" (b-1, t-2 ...) so they can be found and removed again; the game ignores that field.
 import { sampleCurve } from '../engine/curve.js';
-import { createWorld, PAINT_KINDS } from '../engine/world.js';
+import { createWorld, pchip, PAINT_KINDS } from '../engine/world.js';
 import { validateMap, LIMITS } from '../maps/format.js';
 
 export const clone = m => JSON.parse(JSON.stringify(m));
@@ -186,6 +186,74 @@ export function addCurvePoint(map, edge, x, z) {
   for (let i = 0; i < e.pts.length - 1; i++) { const a = e.pts[i], b = e.pts[i + 1], d = nearOnLine([[a[0], a[1], 0], [b[0], b[1], 1]], x, z).d; if (d < bd) { bd = d; best = i; } }
   const p = e.pts.map(q => q.slice()); p.splice(best + 1, 0, [x, z]);
   const r = reshape(map, edge, p); return r === true ? best + 1 : r;
+}
+
+
+// ---------- Shape point: a marker on a road. Up and down change the height there (the slope), left and right bend the road ----------
+export const SHAPE_STEPS = { fine: { h: 0.1, bend: 0.5 }, normal: { h: 0.5, bend: 2 }, coarse: { h: 1, bend: 5 } };
+export function roadHeightAt(map, edge, t) { const e = map.roads.edges[edge]; return e ? pchip(e.profile)(clamp(t, 0, e.profile[e.profile.length - 1][0])) : 0; }
+// Where distance t along a road is, and which way the road runs there: { x, z, dx, dz }.
+export function roadFrame(map, edge, t, lines) {
+  const pts = (lines || polylines(map))[edge]; if (!pts || pts.length < 2) return null;
+  let i = 0; while (i < pts.length - 2 && t > pts[i + 1][2]) i++;
+  const a = pts[i], b = pts[i + 1], u = clamp((t - a[2]) / ((b[2] - a[2]) || 1), 0, 1), dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz) || 1;
+  return { x: a[0] + dx * u, z: a[1] + dz * u, dx: dx / L, dz: dz / L };
+}
+// Distance along a road of the point nearest (x, z).
+export function roadParam(map, edge, x, z, lines) { const pts = (lines || polylines(map))[edge]; return pts && pts.length > 1 ? nearOnLine(pts, x, z).t : 0; }
+// Up or down at distance t: change the height there by dh. A height point is added if none is near; the hill eases smoothly into it.
+export function shapeHeight(map, edge, t, dh) {
+  const e = map.roads.edges[edge]; if (!e) return '!No such road.';
+  if (edge === 0 && e.off) return '!This map has no oval loop.';
+  const len = roadLength(map, edge); t = clamp(t, 0, len);
+  const hit = e.profile.findIndex(p => Math.abs(p[0] - t) <= Math.min(2.5, len / 8));
+  const base = hit >= 0 ? e.profile[hit][1] : roadHeightAt(map, edge, t);
+  const r = setRoadHeight(map, edge, t, base + dh);
+  return typeof r === 'string' ? r : true;
+}
+// Left (side +1) or right (side -1) of the way the road runs, by d metres at distance t. A straight road becomes a curved road with a point here.
+// Returns the moved point { x, z }, or a message starting with "!".
+export function bendAt(map, edge, t, side, d) {
+  const e = map.roads.edges[edge]; if (!e) return '!No such road.';
+  if (edge === 0) return '!The oval loop cannot be bent.';
+  const len = roadLength(map, edge); t = clamp(t, 0, len);
+  const f = roadFrame(map, edge, t); if (!f) return '!No such road.';
+  const nx = f.dz, nz = -f.dx, endMsg = '!Move the marker away from the end of the road to bend it.';
+  const backup = JSON.stringify(e), jb = JSON.stringify(map.roads.junctions);
+  let pts, idx;
+  if (e.type === 'line') {
+    if (t < 3 || len - t < 3) return endMsg;
+    pts = [e.a.slice(), [f.x, f.z], e.b.slice()]; idx = 1;
+    e.type = 'curve'; delete e.a; delete e.b; e.pts = pts.map(q => [r2(q[0]), r2(q[1])]);
+  } else {
+    pts = e.pts.map(q => q.slice());
+    let best = -1, bd = Infinity; pts.forEach((q, i) => { const dd = Math.hypot(q[0] - f.x, q[1] - f.z); if (dd < bd) { bd = dd; best = i; } });
+    if (bd <= 3) { if (best === 0 || best === pts.length - 1) return endMsg; idx = best; }
+    else {
+      if (pts.length >= 24) return '!That road already has 24 points.';
+      let seg = 0, sd = Infinity;
+      for (let i = 0; i < pts.length - 1; i++) { const dd = nearOnLine([[pts[i][0], pts[i][1], 0], [pts[i + 1][0], pts[i + 1][1], 1]], f.x, f.z).d; if (dd < sd) { sd = dd; seg = i; } }
+      pts.splice(seg + 1, 0, [f.x, f.z]); idx = seg + 1;
+    }
+  }
+  pts[idx] = [pts[idx][0] + side * nx * d, pts[idx][1] + side * nz * d];
+  const r = reshape(map, edge, pts);
+  if (r !== true) { map.roads.edges[edge] = JSON.parse(backup); map.roads.junctions = JSON.parse(jb); return r; }
+  return { x: map.roads.edges[edge].pts[idx][0], z: map.roads.edges[edge].pts[idx][1] };
+}
+// Take away the height point and/or the bend point at the marker.
+export function removeShapePoint(map, edge, t) {
+  const e = map.roads.edges[edge]; if (!e) return '!No such road.';
+  let did = false;
+  if (removeRoadHeight(map, edge, t) === true) did = true;
+  if (e.type === 'curve' && e.pts.length > 2) {
+    const f = roadFrame(map, edge, t);
+    if (f) {
+      let best = -1, bd = Infinity; e.pts.forEach((q, i) => { const dd = Math.hypot(q[0] - f.x, q[1] - f.z); if (i > 0 && i < e.pts.length - 1 && dd < bd) { bd = dd; best = i; } });
+      if (best > 0 && bd <= 3 && removeCurvePoint(map, edge, best) === true) did = true;
+    }
+  }
+  return did || '!There is no point to remove here.';
 }
 
 // Remove a cross road. Everything that refers to roads by number (potholes, guard posts, cones) is renumbered.

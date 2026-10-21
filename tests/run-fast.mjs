@@ -328,5 +328,49 @@ ok(parseMap(text).meta.id === 'hill-loop', 'parseMap accepts the shipped file');
   const bad = ED.blankMap(base, { size: 192 }); bad.roads.edges[0].off = 'yes'; ok(!validateMap(bad).ok, 'off must be true or false');
 }
 
+// 11. R1: shape point (up/down = slope, left/right = bend)
+{
+  const base = fresh();
+  const mk = () => { const m = ED.blankMap(base, { size: 192, loop: false }); ED.addRoad(m, [-40, 0], [40, 0]); return m; };
+  let m = mk();
+  const len0 = ED.roadLength(m, 1);
+  ok(ED.shapeHeight(m, 1, 40, 0.5) === true && validateMap(m).ok, 'shape: up adds a height point');
+  ok(Math.abs(ED.roadHeightAt(m, 1, 40) - 0.5) < 0.01, 'shape: the road is 0.5 m higher at the marker');
+  ED.shapeHeight(m, 1, 40, 0.5); ED.shapeHeight(m, 1, 41, 0.5);
+  ok(Math.abs(ED.roadHeightAt(m, 1, 40) - 1.5) < 0.01 && m.roads.edges[1].profile.length === 3, 'shape: pressing near the same place changes the same point (' + m.roads.edges[1].profile.length + ' points)');
+  ED.shapeHeight(m, 1, 40, -3);
+  ok(ED.roadHeightAt(m, 1, 40) >= m.terrain.yMin - 0.01 && validateMap(m).ok, 'shape: down is limited by the lowest allowed height');
+  ok(Math.abs(ED.roadHeightAt(m, 1, 0)) < 0.01 && Math.abs(ED.roadHeightAt(m, 1, len0)) < 0.01, 'shape: the ends of the road are unchanged');
+  // bend a straight road
+  m = mk();
+  const q = ED.bendAt(m, 1, 40, 1, 2);
+  ok(q && typeof q === 'object' && m.roads.edges[1].type === 'curve' && m.roads.edges[1].pts.length === 3 && validateMap(m).ok, 'bend: a straight road becomes a curve with a point at the marker');
+  ok(Math.abs(q.z - (-2)) < 0.01 && Math.abs(q.x) < 0.01, 'bend: left of a road running east is north (z ' + q.z + ')');
+  const q2 = ED.bendAt(m, 1, ED.roadParam(m, 1, q.x, q.z), -1, 2);
+  ok(q2 && Math.abs(q2.z) < 0.01 && m.roads.edges[1].pts.length === 3, 'bend: right moves the same point back, no new point added');
+  const e = m.roads.edges[1];
+  ok(Math.abs(e.pts[0][0] + 40) < 0.01 && Math.abs(e.pts[2][0] - 40) < 0.01, 'bend: the ends of the road stay where they were');
+  ok(typeof ED.bendAt(m, 1, 1, 1, 2) === 'string', 'bend: next to the end of the road is refused');
+  ok(typeof ED.bendAt(m, 0, 10, 1, 2) === 'string', 'bend: the placeholder oval is refused');
+  const lh = ED.blankMap(base, { size: 192, loop: true });
+  ok(typeof ED.bendAt(lh, 0, 10, 1, 2) === 'string' && ED.shapeHeight(lh, 0, 20, 0.5) === true && validateMap(lh).ok, 'oval loop: cannot bend, can change height, still valid');
+  // heights survive a bend
+  m = mk(); ED.shapeHeight(m, 1, 20, 2); const h20 = ED.roadHeightAt(m, 1, 20);
+  ED.bendAt(m, 1, 55, 1, 4);
+  ok(m.roads.edges[1].profile.length >= 3 && validateMap(m).ok, 'bend: height points stay after a bend (' + m.roads.edges[1].profile.length + ')');
+  // a crossing road keeps its junction when the other road is bent elsewhere
+  m = mk(); ED.addRoad(m, [-20, -30], [-20, 30]); ED.bendAt(m, 1, 60, 1, 5);
+  ok(validateMap(m).ok && m.roads.junctions.length >= 1, 'bend: junctions are rebuilt and the map stays valid');
+  // remove
+  m = mk(); ED.bendAt(m, 1, 40, 1, 2); ED.shapeHeight(m, 1, 40, 1);
+  const before = m.roads.edges[1].pts.length;
+  ok(ED.removeShapePoint(m, 1, 40) === true && validateMap(m).ok, 'remove: the point at the marker goes (' + before + ' to ' + m.roads.edges[1].pts.length + ' points)');
+  ok(typeof ED.removeShapePoint(mk(), 1, 40) === 'string', 'remove: nothing to remove gives a message');
+  // many bends stay valid and within 24 points
+  m = mk();
+  for (let i = 0; i < 40; i++) { const r = ED.bendAt(m, 1, 5 + (i * 2) % 70, i % 2 ? 1 : -1, 1.5); if (typeof r === 'string') break; }
+  ok(m.roads.edges[1].pts.length <= 24 && validateMap(m).ok, 'bend: at most 24 points and still valid after many bends (' + m.roads.edges[1].pts.length + ')');
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nAll fast checks passed');
 process.exit(failed ? 1 : 0);

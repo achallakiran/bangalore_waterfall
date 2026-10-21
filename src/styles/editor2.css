@@ -31,3 +31,13 @@
 .e2-choice { display: grid; gap: 2px; text-align: left; padding: 10px 12px; }
 .e2-choice small { opacity: .75; font-size: 12px; }
 .e2-pact .btn[aria-pressed="true"] { background: var(--accent, #f2a900); color: #0d171c; }
+
+/* Shape panel: four buttons for the road at the marker */
+.e2-shape { position: absolute; left: 8px; right: 8px; bottom: 112px; z-index: 6; display: grid; gap: 4px; justify-items: center; pointer-events: none; }
+.e2-shape[hidden] { display: none; }
+.e2-sinfo { pointer-events: auto; padding: 3px 10px; border-radius: 999px; background: rgba(255,255,255,.92); color: #0d171c; font: 600 12px/1.3 system-ui, sans-serif; text-align: center; max-width: 100%; }
+.e2-srow { pointer-events: auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.e2-sbtn { min-width: 48px; height: 48px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--line, #b9c7cd); background: rgba(255,255,255,.95); color: #0d171c; font: 700 20px/1 system-ui, sans-serif; touch-action: none; user-select: none; -webkit-user-select: none; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+.e2-sbtn:active:not(:disabled) { background: #f2a900; }
+.e2-sbtn:disabled { opacity: .35; }
+.e2-sbtn-s { font-size: 12px; min-width: 56px; }

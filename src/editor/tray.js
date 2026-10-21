@@ -19,7 +19,6 @@ export const SECTIONS = [
   { id: 'road', label: 'Roads', tiles: [
     { id: 'road-straight', tool: 'road', set: { curve: false }, label: 'Straight', art: 'roadStraight', tip: 'Drag from one point to another. Ends snap to roads and a junction is made where roads cross.' },
     { id: 'road-curve', tool: 'road', set: { curve: true }, label: 'Curved', art: 'roadCurve', tip: 'Click points along the way, double-click (or Enter) to finish. The road bends smoothly through them.' },
-    { id: 'slope', tool: 'slope', set: {}, label: 'Slope', art: 'slope', tip: 'Click a road to set its height there. Drag a gold dot up or down to change a slope. Alt-click a dot to remove it.' },
     { id: 'start', tool: 'start', set: {}, label: 'Start', art: 'flag', tip: 'Click on a road to move the start of the lap.' }
   ] },
   { id: 'build', label: 'Buildings', tiles: Object.keys(BUILDINGS).map(k => ({ id: 'b-' + k, tool: 'building', set: { style: k }, label: BUILDINGS[k].label, art: 'b:' + k, tip: 'Click to place. Drag to draw your own size. Turn it afterwards by dragging the ring, or press Face road.' })) },

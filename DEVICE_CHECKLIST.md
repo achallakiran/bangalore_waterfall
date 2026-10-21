@@ -74,3 +74,10 @@ Open the live github.io page on each device. Tick what works; note anything odd 
 - [ ] Map editor, New map: choose Small / Medium / Large and *Blank land*: flat grass with no oval.
 - [ ] Draw a road, use the flag tile to set the start, Test drive: you drive on your road, no lap counter running.
 - [ ] *Blank with an oval loop* and *Copy of Hill Loop* still work; Hill Loop in Play looks and drives as before.
+
+## 2.8.0 (shape a road)
+- [ ] Menu shows "NEW v2.8.0"; page title ends v2.8.0.
+- [ ] Select mode: tap a road. Marker, arrow and four buttons appear, above the Undo bar; readout shows height and slope.
+- [ ] Up / Down change the height; hold repeats; one Undo takes back a whole hold.
+- [ ] Left / Right bend; a straight road becomes a curve. Step cycles Fine / Normal / Coarse. Remove works.
+- [ ] Oval loop: Left and Right are greyed out; Up and Down work.

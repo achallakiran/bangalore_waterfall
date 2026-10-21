@@ -28,7 +28,7 @@ const PAINT_K = [K.GRASS, K.SAND, K.SCRUB, K.LATER, K.ROCK, K.ROCK2, K.SOIL, K.P
 const DEEP = []; DEEP[K.ROCK] = K.ROCK2; DEEP[K.ROCK2] = K.ROCK2; DEEP[K.SCRUB] = K.LATER; DEEP[K.LATER] = K.LATER; DEEP[K.SAND] = K.SAND;
 
 // ---- Smooth height profiles (monotone cubic, so grades follow the control points) ----
-function pchip(pts) {
+export function pchip(pts) {
   const n = pts.length, h = [], d = [], m = new Array(n);
   for (let i = 0; i < n - 1; i++) { h[i] = pts[i + 1][0] - pts[i][0]; d[i] = (pts[i + 1][1] - pts[i][1]) / h[i]; }
   m[0] = d[0]; m[n - 1] = d[n - 2];
