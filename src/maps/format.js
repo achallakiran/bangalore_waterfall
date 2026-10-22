@@ -147,6 +147,7 @@ export function validateMap(m) {
     if (q.yaw !== undefined) num(p + '.yaw', q.yaw, -360, 360);
   });
 
+  if (m.edgeSlow !== undefined && typeof m.edgeSlow !== 'boolean') err('edgeSlow', 'must be true or false');   // optional: false = no slow-down near the map edge (the original Hill Loop)
   // potholes
   const PH = m.potholes;
   if (!isObj(PH)) err('potholes', 'is missing');

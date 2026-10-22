@@ -1,6 +1,6 @@
 {
   "name": "hill-loop-v2",
-  "version": "2.8.0",
+  "version": "2.9.2",
   "private": true,
   "type": "module",
   "description": "Hill Loop Track v2: voxel hill-road driving game (shell, install, controls)",

@@ -16,7 +16,9 @@ const ok = (c, msg) => { console.log((c ? 'PASS ' : 'FAIL ') + msg); if (!c) fai
 
 const { srv, url } = await serve(path.join(ROOT, 'dist'));
 const browser = await launch();
-const { page, errors } = await newPage(browser);
+const { page, errors, ctx } = await newPage(browser);
+// The pictures are compared with the original game, which has the flat page sky and no fog: use Classic for this check.
+await ctx.addInitScript(() => { try { localStorage.setItem('hl2.settings.v1', JSON.stringify({ sky: 'classic' })); } catch (e) {} });
 await page.goto(url + 'index.html?parity=1');
 await waitBuilt(page);
 ok(true, 'v2 game built in parity mode');

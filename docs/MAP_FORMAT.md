@@ -15,6 +15,7 @@ Units are metres. `x` runs east, `z` runs south (so north is negative `z`), `y` 
 | `roads` | Road width, kerb, line and dash settings, junction blend radii, `edges` and `junctions` |
 | `markings` | Zebra crossing and the chequered start line |
 | `pads` | Named flat areas under buildings (`id`, box, height `h`, blend `m`) |
+| `edgeSlow` | Optional boolean. `false` switches off the slow-down near the map edge (the original Hill Loop). Absent means on. |
 | `potholes` | Clusters placed along a road by distance, plus exclusion zones |
 | `start` | Where the player starts |
 | `traffic` | The moving background vehicles (`nBike`, `nAuto`) |
