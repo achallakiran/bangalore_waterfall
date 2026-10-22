@@ -96,3 +96,9 @@ Open the live github.io page on each device. Tick what works; note anything odd 
 - [ ] In the editor raise a block of ground, test-drive off its edge: the car leaves the ground, the nose drops, it lands with a jolt. A very high drop puts you back on the last road with "Fell off: back on the road".
 - [ ] Ordinary road, curbs, speed breakers and potholes never make the car fly.
 - [ ] Settings > Cliff falls > Off: the car hugs the ground again. Sky, fog & edge > Classic: flat old sky, no fog, no hills.
+
+## 2.10.0 (Physics: New)
+
+- Settings > Physics > New: drive Hill Loop (car and bike); it should feel like Classic on the road, with no hopping at crests.
+- Raise a block in the editor and creep a vehicle off its edge at very low speed: it should leave the face and fall (Classic may stick).
+- Compare potholes and curbs against Classic and say if New feels too soft or too harsh.

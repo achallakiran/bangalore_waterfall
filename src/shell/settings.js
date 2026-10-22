@@ -15,6 +15,7 @@ export const DEFAULTS = {
   units: 'kmh',     // kmh | mph
   theme: 'auto',    // auto | light | dark
   fall: 'on',       // on | off (off = the vehicle always hugs the ground, even off a cliff)
+  physics: 'classic', // classic | new (new = wheel-contact physics: wheels with radius, springs, real falls)
   sky: 'new',       // new | classic (classic = the old flat sky, no fog)
   budget: 'auto'    // memory budget: auto | low | medium | high (applies the next time a game starts)
 };

@@ -4,6 +4,7 @@ import { createWorld } from '../../engine/world.js';
 import { budgetFor, planMemory } from '../../engine/budget.js';
 import { createSky } from './sky.js';
 import { createEdge } from './edge.js';
+import { createContact, effectiveHeight } from './contact.js';
 
 const THREE = window.THREE;
 export function boot(hooks, map) {
@@ -344,8 +345,10 @@ function buildCar() {
 
 // ===== Vehicle handling. Speeds are in m/s; the HUD shows km/h. =====
 const VEH = {
-  car: { maxF: 15.5, maxR: 5, acc: 7.5, brk: 16, wb: 2.3, sMax: 0.5, sMin: 0.16, circ: [-0.95, 0.95], r: 0.85, camD: 19, lean: 0.03, wheels: [[1.2, -0.72], [1.2, 0.72], [-1.2, -0.72], [-1.2, 0.72]], wob: 0.75 },
-  bike: { maxF: 19, maxR: 4, acc: 9.5, brk: 14, wb: 1.5, sMax: 0.7, sMin: 0.12, circ: [-0.5, 0.5], r: 0.45, camD: 15, lean: 0.42, wheels: [[0.8, 0], [-0.8, 0]], wob: 1.3 }
+  car: { maxF: 15.5, maxR: 5, acc: 7.5, brk: 16, wb: 2.3, sMax: 0.5, sMin: 0.16, circ: [-0.95, 0.95], r: 0.85, camD: 19, lean: 0.03, wheels: [[1.2, -0.72], [1.2, 0.72], [-1.2, -0.72], [-1.2, 0.72]], wob: 0.75,
+    ct: { wheels: [[1.2, -0.72], [1.2, 0.72], [-1.2, -0.72], [-1.2, 0.72]], R: 0.35, stat: 0.11, g: 20, upMul: 4, zeta: 0.55, droop: 0.25, stop: 0.3, climb: 0.6, rgP: 1.1, rgR: 0.6, pitchLimit: 0.7, rollLimit: 0.5 } },
+  bike: { maxF: 19, maxR: 4, acc: 9.5, brk: 14, wb: 1.5, sMax: 0.7, sMin: 0.12, circ: [-0.5, 0.5], r: 0.45, camD: 15, lean: 0.42, wheels: [[0.8, 0], [-0.8, 0]], wob: 1.3,
+    ct: { wheels: [[0.8, 0], [-0.8, 0]], R: 0.33, stat: 0.1, g: 20, upMul: 4, zeta: 0.5, droop: 0.3, stop: 0.28, climb: 0.6, rgP: 0.7, rgR: 0.4, pitchLimit: 0.8, rollLimit: 0.5 } }
 };
 
 // ===== Three.js =====
@@ -625,7 +628,8 @@ const best = { car: 0, bike: 0 };
 try { const b = JSON.parse(localStorage.getItem('loop-hills-best') || '{}'); best.car = b.car || 0; best.bike = b.bike || 0; } catch (e) {}
 const NPC = map.traffic.map(n => ({ key: n.key, s: n.s, dir: n.dir, u: n.u, speed: n.speed, r: n.r, ph: n.ph, y: 0, pitch: 0 }));
 const potState = [-1, -1, -1, -1], recent = new Map();
-function snapPlayer() { if (stream) streamSync(); P.y = gY(P.x, P.z); P.by = P.y; P.air = false; P.vy = 0; P.vyG = 0; NPC.forEach(n => { n.y = null; }); snapCam = true; }
+let cFresh = true;   // Physics: New starts the wheel model again from the ground
+function snapPlayer() { cFresh = true; if (stream) streamSync(); P.y = gY(P.x, P.z); P.by = P.y; P.air = false; P.vy = 0; P.vyG = 0; NPC.forEach(n => { n.y = null; }); snapCam = true; }
 function resetRun() {
   P.x = map.start.x; P.z = map.start.z; P.psi = map.start.psi; P.v = 0; P.steer = 0; P.pitch = 0; P.roll = 0; P.jy = P.jv = 0; P.wobA = 0; P.wobT = 9; P.pot = 0;
   potState.fill(-1); recent.clear();
@@ -736,10 +740,98 @@ function fallStep(dt) {
   }
 }
 
+
+// ===== Physics: New (wheel contact). The classic path below is untouched; this one is used only when Settings > Physics is New. =====
+// Each wheel is a circle of radius R rolling over the ground (see contact.js). The vehicle is held up by springs and dampers, leaves the
+// ground when no wheel touches, lands with the speed its wheels arrive at, and loses speed climbing in proportion to the load on the wheel
+// and the slope it is on. There is no separate pothole, ledge or cliff rule: they are all just ground height under the wheels.
+const physNew = () => hooks.physics === 'new';
+const CT = {};
+const ctOf = () => CT[kind] || (CT[kind] = createContact(VEH[kind].ct));
+const cOld = new Float64Array(4), cNew = new Float64Array(4);
+function wheelPos(i, fx, fz, rx, rz) { const w = VEH[kind].wheels[i]; return [P.x + fx * w[0] + rx * w[1], P.z + fz * w[0] + rz * w[1]]; }
+function sampleWheels(out) {
+  const sp = VEH[kind], fx = Math.cos(P.psi), fz = -Math.sin(P.psi), rx = Math.sin(P.psi), rz = Math.cos(P.psi);
+  for (let i = 0; i < sp.wheels.length; i++) { const w = wheelPos(i, fx, fz, rx, rz); out[i] = effectiveHeight(gY, w[0], w[1], fx, fz, sp.ct.R); }
+}
+// True when a wheel would have to climb more than the vehicle can (a wall, a steep cliff face): the move is refused.
+function climbBlocked() {
+  const sp = VEH[kind], C = ctOf(), t = sp.ct;
+  sampleWheels(cNew);
+  const spn = Math.sin(C.pitch), srn = Math.sin(C.roll);
+  for (let i = 0; i < sp.wheels.length; i++) {
+    const att = C.y + sp.wheels[i][0] * spn - sp.wheels[i][1] * srn;
+    if (cNew[i] + t.stat - att - t.stop > t.climb) return true;
+  }
+  return false;
+}
+function potholeNote(pi, side) {
+  const p = World.POTS[pi], sp = VEH[kind];
+  const sev = (p.r / 0.7) * (p.depth === 2 ? 1.2 : 1) * clamp(Math.abs(P.v) / (sp.maxF * 0.55), 0.35, 1.5);
+  P.v *= 1 - Math.min(0.45, 0.22 * sev);     // the map's pothole keeps its bite, as in Classic
+  P.wobA = Math.max(P.wobA * 0.5, 0.2 * sev * sp.wob); P.wobT = 0; P.wobPh = Math.random() < 0.5 ? 1 : -1;
+  P.psi += (side || P.wobPh) * 0.045 * sev * sp.wob;
+  shake = Math.max(shake, 0.12 + 0.2 * sev);
+  const now = performance.now();
+  if (!recent.has(pi) || now - recent.get(pi) > 1500) { P.pot++; P.potMsg = 0.9; }
+  recent.set(pi, now);
+  thump(sev);
+}
+function newWheels(dt) {
+  const sp = VEH[kind], C = ctOf(), n = sp.wheels.length;
+  const fx = Math.cos(P.psi), fz = -Math.sin(P.psi), rx = Math.sin(P.psi), rz = Math.cos(P.psi);
+  sampleWheels(cNew);
+  for (let i = 0; i < n; i++) {
+    const w = wheelPos(i, fx, fz, rx, rz), pi = World.potholeAt(w[0], w[1], 0.08);
+    if (pi >= 0 && potState[i] !== pi && Math.abs(P.v) > 0.8) potholeNote(pi, sp.wheels[i][1] < 0 ? -1 : sp.wheels[i][1] > 0 ? 1 : 0);
+    potState[i] = pi;
+  }
+  if (cFresh) {   // first step, a reset or a teleport: start resting on the ground
+    let a = 0; for (let i = 0; i < n; i++) { cOld[i] = cNew[i]; a += cNew[i]; }
+    C.reset(a / n, 0, 0); cFresh = false; P.air = false;
+  }
+  const wasAir = P.air;
+  P.lx = P.x; P.lz = P.z;
+  C.step(dt, cOld, cNew);
+  // the slope each wheel climbed this step (rise per metre travelled) gives the speed lost going up and gained going down
+  const ds = Math.abs(P.v) * dt;
+  let sf = 0;
+  if (ds > 1e-4) for (let i = 0; i < n; i++) sf += C.f[i] * clamp((cNew[i] - cOld[i]) / ds, -1.5, 1.5);
+  P.slopeF = sf;
+  let a = 0; for (let i = 0; i < n; i++) { cOld[i] = cNew[i]; a += cNew[i]; }
+  P.gy = a / n;
+  P.air = C.airborne && C.airT > 0.12;
+  P.by = C.y; P.vy = C.vy; P.vyG = 0;
+  if (P.air) {
+    // in the air the nose follows the flight path; the body model follows the displayed attitude so it lands as it looks
+    const pitchT = clamp(Math.atan2(C.vy, Math.max(Math.abs(P.v), 4)), -0.7, 0.3);
+    P.pitch = lerp(P.pitch, pitchT, Math.min(1, dt * 10)); P.roll = lerp(P.roll, 0, Math.min(1, dt * 10));
+    C.pitch = P.pitch; C.wp = 0; C.roll = P.roll; C.wr = 0;
+  } else { P.pitch = C.pitch; P.roll = C.roll; }
+  P.jy = 0; P.jv = 0;
+  if (C.y < World.Y_MIN - 8) { fallReset(); return; }
+  if (wasAir && C.landed > 0) {
+    const impact = C.landed;
+    if (impact > FALL.crash) { fallReset(); return; }
+    if (impact > 2.5) {
+      const sev = clamp(impact / 10, 0.2, 1.6);
+      shake = Math.max(shake, 0.1 + 0.25 * sev);
+      P.v *= 1 - Math.min(0.4, 0.04 * Math.max(0, impact - 3));
+      thump(sev);
+    }
+  }
+  if (!P.air) {
+    const hard = (C.load() - 30) / 70;     // a hard hit on the wheels shakes the view a little, more the harder it is
+    if (hard > 0) shake = Math.max(shake, Math.min(0.35, 0.05 + 0.3 * hard));
+    P.safeT -= dt;
+    if (P.safeT <= 0 && gKind(P.x, P.z) === K.ROAD) { P.safe.x = P.x; P.safe.z = P.z; P.safe.psi = P.psi; P.safeT = 0.4; }
+  }
+}
+
 function step(dt, ctl) {
   const sp = VEH[kind];
   // A jump of more than 2 m between steps is a teleport (start, reset, a test placing the vehicle): forget the old body height.
-  if (P.lx !== undefined && (Math.abs(P.x - P.lx) > 2 || Math.abs(P.z - P.lz) > 2)) { P.by = null; P.air = false; P.vy = 0; P.vyG = 0; _hd.length = 0; _hy.length = 0; }
+  if (P.lx !== undefined && (Math.abs(P.x - P.lx) > 2 || Math.abs(P.z - P.lz) > 2)) { P.by = null; P.air = false; P.vy = 0; P.vyG = 0; _hd.length = 0; _hy.length = 0; cFresh = true; }
   const surf = World.MULT[gKind(P.x, P.z)];
   const vmax = sp.maxF * surf, rmax = sp.maxR * surf;
   const thr = (ctl.up ? 1 : 0) - (ctl.down ? 1 : 0);
@@ -755,7 +847,8 @@ function step(dt, ctl) {
   { const e = edge.probe(P.x, P.z, Math.cos(P.psi) * P.v, -Math.sin(P.psi) * P.v); P.edge = e.f; P.edgeOut = e.away;
     if (e.away > 0 && EDGE_SLOW) P.v *= Math.exp(-3.2 * e.away * e.away * dt); }
   // gravity along the slope: uphill bleeds speed, downhill gives it back; a gentle slope holds a parked vehicle
-  const g = 9.8 * 0.55 * Math.sin(P.pitch);
+  let g = 9.8 * 0.55 * Math.sin(P.pitch);
+  if (physNew() && Math.abs(P.v) >= 0.5) g = Math.sign(P.v) * 0.55 * (P.slopeF || 0) * 9.8 / VEH[kind].ct.g;   // from the wheels: steps and rises cost speed
   if (!(thr === 0 && Math.abs(P.v) < 0.5 && Math.abs(P.pitch) < 0.08)) P.v -= g * dt; else P.v = 0;
   }
 
@@ -778,6 +871,9 @@ function step(dt, ctl) {
   // The steep-face wall compares the ground ahead with the vehicle's own height (so a car leaving a cliff edge is not held by the lip it is
   // driving off). With Cliff falls off it is the ground under the centre, exactly as before.
   const yHere = (hooks.fall === 'off' || P.by === null || P.by === undefined) ? gY(px0, pz0) : P.by;
+  if (physNew()) {
+    if (climbBlocked()) { P.x = px0; P.z = pz0; hit = true; }
+  } else
   for (let c = 0; c < sp.circ.length; c++) {
     const cx = P.x + fx * sp.circ[c], cz = P.z + fz * sp.circ[c];
     if (gY(cx, cz) - yHere > 0.85) { P.x = px0; P.z = pz0; hit = true; break; }
@@ -805,6 +901,7 @@ function step(dt, ctl) {
   }
   P.hit = hit;
 
+  if (physNew()) { newWheels(dt); P.acc = lerp(P.acc, clamp((P.v - vPrev) / dt, -10, 10), 0.2); return; }
   // Wheels: ride height, pitch, roll and pothole hits.
   const fx2 = Math.cos(P.psi), fz2 = -Math.sin(P.psi), rx = Math.sin(P.psi), rz = Math.cos(P.psi);
   const ws = sp.wheels;
@@ -1201,7 +1298,7 @@ function frame(now) {
 
   const pa = kind === 'car' ? A.pCar : A.pBike, sp = VEH[kind];
   const target = P.gy !== undefined ? P.gy : gY(P.x, P.z);
-  if (P.air) P.y = P.by; else P.y = lerp(P.y, target, Math.min(1, dt * 14));
+  if (P.air || physNew()) P.y = P.by; else P.y = lerp(P.y, target, Math.min(1, dt * 14));
   const frac = clamp(Math.abs(P.v) / sp.maxF, 0, 1);
   pa.root.position.set(P.x, P.y + P.jy, P.z);
   pa.root.rotation.y = P.psi;

@@ -89,3 +89,7 @@ public/               maps/hill-loop.json, manifest, icons, previews, vendored t
 tools/                make-hill-loop-map.mjs (provenance), service worker template, service worker template, thumbnail extractor
 tests/                harness, references, legacy builds (read only)
 ```
+
+## 2.10.0: wheel-contact physics (optional)
+
+Settings > Physics > New drives the vehicle on wheels with a radius, springs and dampers instead of following the ground height. Falls, ledges, curbs and steep faces then come from the same contact model (no sticking to a cliff face at low speed). Classic stays the default and is unchanged. Code: `src/game/hill-loop/contact.js`; tests: `tests/contact.mjs`, `tests/phys-compare.mjs`, `tests/fall-new.mjs`. Known: pothole and fall feel under New still to be tuned on a device.
