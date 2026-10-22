@@ -47,14 +47,15 @@ const DROP = `(function (hM, v, kind, sx, sz) {
     for (let k = 0; k < HF.nz; k++) for (let i = 0; i < HF.nx; i++) if (inBlock(HF.x0 + (i + 0.5) * HF.v, HF.z0 + (k + 0.5) * HF.v)) HF.top[i + HF.nx * k] += cells;
   }
   P.safe.x = World.map.start.x; P.safe.z = World.map.start.z; P.safe.psi = World.map.start.psi;
-  P.x = spot.x - 6; P.z = spot.z; P.psi = 0; P.v = 0; P.air = false; P.by = null;
+  P.x = v < 2 ? xe - 3 : spot.x - 6; P.z = spot.z; P.psi = 0; P.v = 0; P.air = false; P.by = null;
   const idle = { up: false, down: false, left: false, right: false, hb: false };
   for (let i = 0; i < 4; i++) l.step(1 / 60, idle);
   P.v = v; P.vyG = 0;
   const ctl = { up: true, down: false, left: false, right: false, hb: false };
   let airT = 0, firstAir = -1, landed = false, impact = 0, maxJy = 0, crashed = false, yMin = 1e9, pitchMin = 0;
   const xe0 = xe, trace = [];
-  for (let i = 0; i < 1500; i++) {
+  for (let i = 0; i < (v < 2 ? 2500 : 1500); i++) {
+    if (v < 2 && !P.air) P.v = v;   // crawl: hold the speed
     const was = P.air, vy0 = P.vy;
     l.step(1 / 120, ctl);
     if (P.air) { airT += 1 / 120; if (firstAir < 0) firstAir = P.x - xe0; pitchMin = Math.min(pitchMin, P.pitch); }
@@ -89,6 +90,8 @@ ok(r1.landed && r1.airT > 0.05 && r1.airT < 0.6, `car creeping off a 1.2 m ledge
 
 const rc = await drop(page, 20, 12, 'car');
 ok(rc.crashed && rc.back < 1.5, `a 20 m fall counts as a crash and puts the car back on the road (${rc.back && rc.back.toFixed(1)} m from the last road point)`);
+const rcreep = await drop(page, 6, 0.8, 'car');
+ok(rcreep.landed && rcreep.airT > 0.3, `car crawling off a 6 m cliff at 0.8 m/s (3 km/h) still leaves the wall and falls (${rcreep.airT && rcreep.airT.toFixed(2)} s in the air)`);
 await page.screenshot({ path: path.join(out, 'after-crash.png'), clip: { x: 0, y: 0, width: 900, height: 560 }, timeout: 120000 });
 
 // Small things never trigger a fall: drive the real game (road, curbs, hills, potholes) with the gas held, watching for any air time.

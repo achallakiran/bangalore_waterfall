@@ -693,7 +693,8 @@ function potholeHit(pi, wheelIdx, side) {
 // puts it back on the last road it was on. Curbs, speed breakers, potholes and ordinary slopes never trigger it.
 // Settings > Cliff falls > Off restores the old behaviour (ground-hugging everywhere).
 const EDGE_SLOW = map.edgeSlow !== false;   // the original Hill Loop file says false, so it drives exactly as it always did
-const FALL = { g: 20, slope: 1.2, crash: 22 };   // slope: steepest ground-height drop per metre travelled that the four-wheel average can follow
+const FALL = { g: 20, slope: 1.2, window: 1.3, crash: 22 };
+const _hd = [], _hy = []; let fallDist = 0;   // recent (distance travelled, height) pairs for the creep check   // slope: steepest ground-height drop per metre travelled that the four-wheel average can follow
 function fallReset() {
   const s = P.safe;
   P.x = s.x; P.z = s.z; P.psi = s.psi; P.v = 0; P.steer = 0; P.pitch = 0; P.roll = 0; P.jy = P.jv = 0; P.air = false; P.vy = 0;
@@ -702,12 +703,18 @@ function fallReset() {
 function fallStep(dt) {
   const g = P.gy;
   P.lx = P.x; P.lz = P.z;
-  if (hooks.fall === 'off' || !isFinite(g)) { P.air = false; P.by = g; return; }
+  if (hooks.fall === 'off' || !isFinite(g)) { P.air = false; P.by = g; _hd.length = 0; _hy.length = 0; return; }
   if (P.by === null || P.by === undefined) P.by = g;
   if (!P.air) {
     const drop = P.by - g, ds = Math.abs(P.v) * dt;
-    if (drop > 0.03 && drop > ds * FALL.slope + 0.01) { P.air = true; P.vy = Math.min(0, P.vyG); }
+    fallDist += ds;
+    // Also look at the drop over the last ~0.4 m of travel, so a vehicle creeping over an edge (too slow for the per-step check) still leaves the wall.
+    while (_hd.length && fallDist - _hd[0] > 0.4) { _hd.shift(); _hy.shift(); }
+    let creep = false;
+    if (_hd.length) { const dd = fallDist - _hd[0], dr = _hy[0] - g; creep = dd > 0.1 && dr > 0.1 && dr / dd > FALL.window; }
+    if ((drop > 0.03 && drop > ds * FALL.slope + 0.01) || creep) { P.air = true; P.vy = Math.min(0, P.vyG); _hd.length = 0; _hy.length = 0; }
     else {
+      _hd.push(fallDist); _hy.push(g);
       P.vyG = clamp((g - P.by) / dt, -8, 8); P.by = g;
       P.safeT -= dt;
       if (P.safeT <= 0 && gKind(P.x, P.z) === K.ROAD) { P.safe.x = P.x; P.safe.z = P.z; P.safe.psi = P.psi; P.safeT = 0.4; }
@@ -718,7 +725,7 @@ function fallStep(dt) {
   if (P.by < World.Y_MIN - 8) { fallReset(); return; }
   if (P.by <= g) {
     const impact = -P.vy;
-    P.by = g; P.air = false; P.vy = 0; P.vyG = 0;
+    P.by = g; P.air = false; P.vy = 0; P.vyG = 0; _hd.length = 0; _hy.length = 0;
     if (impact > FALL.crash) { fallReset(); return; }
     if (impact > 2.5) {
       const sev = clamp(impact / 10, 0.2, 1.6);
@@ -732,7 +739,7 @@ function fallStep(dt) {
 function step(dt, ctl) {
   const sp = VEH[kind];
   // A jump of more than 2 m between steps is a teleport (start, reset, a test placing the vehicle): forget the old body height.
-  if (P.lx !== undefined && (Math.abs(P.x - P.lx) > 2 || Math.abs(P.z - P.lz) > 2)) { P.by = null; P.air = false; P.vy = 0; P.vyG = 0; }
+  if (P.lx !== undefined && (Math.abs(P.x - P.lx) > 2 || Math.abs(P.z - P.lz) > 2)) { P.by = null; P.air = false; P.vy = 0; P.vyG = 0; _hd.length = 0; _hy.length = 0; }
   const surf = World.MULT[gKind(P.x, P.z)];
   const vmax = sp.maxF * surf, rmax = sp.maxR * surf;
   const thr = (ctl.up ? 1 : 0) - (ctl.down ? 1 : 0);
