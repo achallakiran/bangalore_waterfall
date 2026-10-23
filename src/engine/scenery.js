@@ -117,7 +117,7 @@ function rockAt(P, x, z, r, seed) {
   const greys = [0x8E959B, 0x7B8289, 0x9A9690, 0x6F757C];
   P.push(S(x, y0 + r * 0.4, z, r, greys[Math.floor(h(1) * 4)], 0.1));
   if (r >= 0.4) P.push(S(x + r * (0.5 + h(2) * 0.4) * (h(3) < 0.5 ? -1 : 1), y0 + r * 0.22, z + r * (0.3 + h(4) * 0.4) * (h(5) < 0.5 ? -1 : 1), r * 0.55, greys[Math.floor(h(6) * 4)], 0.1));
-  if (r >= 0.3) circ(x, z, r * 0.85);
+  if (r > 0.55) circ(x, z, r * 0.85);
 }
 function pebblesAt(P, x, z, n, spread, seed) {
   const h = (k) => { let q = Math.imul((seed | 0) + k * 6151, 374761393); q = Math.imul(q ^ (q >>> 13), 1274126177); return ((q ^ (q >>> 16)) >>> 0) / 4294967296; };

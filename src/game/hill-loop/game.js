@@ -131,14 +131,36 @@ function tree(P, x, z, h, r) {
   P.push(S(x - r * 0.5, y0 + h * 0.55 + r * 0.35, z + r * 0.3, r * 0.65, 0x367F38, 0.12));
   circ(x, z, 0.5);
 }
+// Rocks and pebbles are part of the ground the wheels read (rockBump, added in gY): a small rock is a bump to climb, a tall one is also
+// solid so it blocks. Pebbles are a light roughness. ROCKS/PEBS are cleared with the other objects when the map is built.
+const ROCKS = new Map(), PEBS = [], ROCK_SOLID_R = 0.55;
+const rkey = (x, z) => Math.floor(x / 2) + ',' + Math.floor(z / 2);
+function addRockBump(x, z, r) {
+  for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const k = rkey(x + a * 2, z + b * 2); let l = ROCKS.get(k); if (!l) ROCKS.set(k, l = []); if (!l.some(q => q.x === x && q.z === z)) l.push({ x, z, r }); }
+}
+function rockBump(x, z) {
+  let m = 0;
+  const l = ROCKS.get(rkey(x, z));
+  if (l) for (let i = 0; i < l.length; i++) {
+    const q = l[i], d = Math.hypot(x - q.x, z - q.z);
+    if (d < q.r * 0.917) { const h = 0.4 * q.r + Math.sqrt(q.r * q.r - d * d); if (h > m) m = h; }
+  }
+  for (let i = 0; i < PEBS.length; i++) {
+    const q = PEBS[i], d = Math.hypot(x - q.x, z - q.z);
+    if (d < q.r) { const nz = Math.sin(Math.floor(x * 9) * 12.9898 + Math.floor(z * 9) * 78.233) * 43758.5453; const h = 0.035 * (nz - Math.floor(nz)) * (1 - d / q.r); if (h > m) m = h; }
+  }
+  return m;
+}
 function rockAt(P, x, z, r, seed) {
   const y0 = gh(x, z), h = (k) => { let q = Math.imul((seed | 0) + k * 7919, 374761393); q = Math.imul(q ^ (q >>> 13), 1274126177); return ((q ^ (q >>> 16)) >>> 0) / 4294967296; };
   const greys = [0x8E959B, 0x7B8289, 0x9A9690, 0x6F757C];
   P.push(S(x, y0 + r * 0.4, z, r, greys[Math.floor(h(1) * 4)], 0.1));
   if (r >= 0.4) P.push(S(x + r * (0.5 + h(2) * 0.4) * (h(3) < 0.5 ? -1 : 1), y0 + r * 0.22, z + r * (0.3 + h(4) * 0.4) * (h(5) < 0.5 ? -1 : 1), r * 0.55, greys[Math.floor(h(6) * 4)], 0.1));
-  if (r >= 0.3) circ(x, z, r * 0.85);
+  addRockBump(x, z, r);
+  if (r > ROCK_SOLID_R) circ(x, z, r * 0.85);   // only a tall rock blocks; a small one is a bump the wheels climb
 }
 function pebblesAt(P, x, z, n, spread, seed) {
+  PEBS.push({ x, z, r: spread });
   const h = (k) => { let q = Math.imul((seed | 0) + k * 6151, 374761393); q = Math.imul(q ^ (q >>> 13), 1274126177); return ((q ^ (q >>> 16)) >>> 0) / 4294967296; };
   const greys = [0x9A9690, 0x8A8F94, 0xA8A39A, 0x77797C, 0xB3AA98];
   for (let i = 0; i < n; i++) {
@@ -200,7 +222,7 @@ function cone(P, x, z, y0) {
 
 // Scenery comes from map.scenery, in file order (order matters: window paint goes on top of the wall drawn before it).
 function buildObjects() {
-  SOLIDS.length = 0;
+  SOLIDS.length = 0; ROCKS.clear(); PEBS.length = 0;
   const P = [];
   for (const it of map.scenery) {
     switch (it.t) {
@@ -469,7 +491,7 @@ function sprite(cv, prims, min, max) {
 
 // ----- ground lookups (built heightfield) -----
 let HF = null;
-const gY = (x, z) => (HF && HF.stream ? HF.y(x, z) : World.hfY(HF, x, z));
+const gY = (x, z) => (HF && HF.stream ? HF.y(x, z) : World.hfY(HF, x, z)) + ((ROCKS.size || PEBS.length) ? rockBump(x, z) : 0);
 const gKind = (x, z) => (HF && HF.stream ? HF.kind(x, z) : World.hfKind(HF, x, z));
 
 // ----- build -----
@@ -783,6 +805,22 @@ function climbBlocked() {
   return false;
 }
 const cutState = [false, false, false, false]; let cutLast = 0;
+// A wheel meeting a hole cut into the road (editor Road damage): the ground there is really lower, and this adds the bite of a pothole,
+// scaled by its depth and the speed: speed lost, wobble, a shake, a thump and the counter. Same in Classic and New.
+function cutNote(i, wx, wz, side) {
+  const sp = VEH[kind], cm = World.cutAt ? World.cutAt(wx, wz) : 0, hit = cm >= 8;
+  if (hit && !cutState[i] && Math.abs(P.v) > 0.8) {
+    const sev = clamp(cm / 25, 0.5, 3) * clamp(Math.abs(P.v) / (sp.maxF * 0.55), 0.35, 1.5);
+    P.v *= 1 - Math.min(0.4, 0.2 * sev);
+    P.wobA = Math.max(P.wobA * 0.5, 0.2 * sev * sp.wob); P.wobT = 0; P.wobPh = Math.random() < 0.5 ? 1 : -1;
+    P.psi += (side || P.wobPh) * 0.04 * sev * sp.wob;
+    shake = Math.max(shake, 0.1 + 0.18 * sev); thump(sev);
+    const now = performance.now();
+    if (now - cutLast > 1500) { P.pot++; P.potMsg = 0.9; }
+    cutLast = now;
+  }
+  cutState[i] = hit;
+}
 function potholeNote(pi, side) {
   const p = World.POTS[pi], sp = VEH[kind];
   const sev = (p.r / 0.7) * (p.depth === 2 ? 1.2 : 1) * clamp(Math.abs(P.v) / (sp.maxF * 0.55), 0.35, 1.5);
@@ -803,16 +841,7 @@ function newWheels(dt) {
     const w = wheelPos(i, fx, fz, rx, rz), pi = World.potholeAt(w[0], w[1], 0.08);
     if (pi >= 0 && potState[i] !== pi && Math.abs(P.v) > 0.8) potholeNote(pi, sp.wheels[i][1] < 0 ? -1 : sp.wheels[i][1] > 0 ? 1 : 0);
     potState[i] = pi;
-    // a hole cut into the road in the editor: the wheel really drops in (ground height), this adds the sound, shake and count
-    const cut = World.cutAt ? World.cutAt(w[0], w[1]) >= 8 : false;
-    if (cut && !cutState[i] && Math.abs(P.v) > 0.8) {
-      const sev = clamp(Math.abs(P.v) / (sp.maxF * 0.55), 0.35, 1.2);
-      shake = Math.max(shake, 0.1 + 0.18 * sev); thump(sev);
-      const now = performance.now();
-      if (now - cutLast > 1500) { P.pot++; P.potMsg = 0.9; }
-      cutLast = now;
-    }
-    cutState[i] = cut;
+    cutNote(i, w[0], w[1], sp.wheels[i][1] < 0 ? -1 : sp.wheels[i][1] > 0 ? 1 : 0);
   }
   if (cFresh) {   // first step, a reset or a teleport: start resting on the ground
     let a = 0; for (let i = 0; i < n; i++) { cOld[i] = cNew[i]; a += cNew[i]; }
@@ -943,6 +972,7 @@ function step(dt, ctl) {
     const pi = World.potholeAt(wx, wz, 0.08);
     if (pi >= 0 && potState[i] !== pi && Math.abs(P.v) > 0.8) potholeHit(pi, i, ws[i][1] < 0 ? -1 : ws[i][1] > 0 ? 1 : 0);
     potState[i] = pi;
+    cutNote(i, wx, wz, ws[i][1] < 0 ? -1 : ws[i][1] > 0 ? 1 : 0);
   }
   const half = ws[0][0];
   const pitchT = P.air ? clamp(Math.atan2(P.vy, Math.max(Math.abs(P.v), 4)), -0.7, 0.3) : Math.atan2(fy / fn - ry / rn, 2 * half);
@@ -1411,7 +1441,21 @@ function dispose() {
   } catch (e) {}
   if (window.__loop === dbg) delete window.__loop;
 }
-const dbg = { get memory() { return api.memory; }, buildObjects, pushOut, inside, P, lap, state, SOLIDS, World, start, setCam, keys, A, gY, NPC, VEH, get HF() { return HF; }, potholeHit, setKind, step, inp, resetRun, lapUpdate, edge, FALL, fallReset, get kind() { return kind; }, get fog() { return scene.fog; }, get skyOn() { return sky.enabled; }, get order() { return stream && stream.order; } };
+// Test helper: building solids within R metres of the player whose scenery tile is not built yet (a vehicle would hit something it cannot see).
+function unbuiltNear(R) {
+  const S = stream; if (!S) return { streaming: false, near: 0, unbuilt: 0 };
+  const T = S.ti.T; let near = 0, unbuilt = 0;
+  for (let i = 0; i < SOLIDS.length; i++) {
+    const q = SOLIDS[i]; if (q.t === 'c') continue;
+    const cx = q.t === 'b' ? (q.x0 + q.x1) / 2 : q.x, cz = q.t === 'b' ? (q.z0 + q.z1) / 2 : q.z;
+    if (Math.hypot(cx - P.x, cz - P.z) > R) continue;
+    near++;
+    const t = S.tiles.get(Math.floor(cx / T) + ',' + Math.floor(cz / T));
+    if (!t) unbuilt++;
+  }
+  return { streaming: true, near, unbuilt, tiles: S.tiles.size, tileCubes: S.tileCubes, tileBudget: S.tileBudget };
+}
+const dbg = { unbuiltNear, get physics() { return hooks.physics; }, get rocks() { return ROCKS.size + '/' + PEBS.length; }, rockBump, get memory() { return api.memory; }, buildObjects, pushOut, inside, P, lap, state, SOLIDS, World, start, setCam, keys, A, gY, NPC, VEH, get HF() { return HF; }, potholeHit, setKind, step, inp, resetRun, lapUpdate, edge, FALL, fallReset, get kind() { return kind; }, get fog() { return scene.fog; }, get skyOn() { return sky.enabled; }, get order() { return stream && stream.order; } };
 window.__loop = dbg;
 return { api, dispose, debug: dbg };
 

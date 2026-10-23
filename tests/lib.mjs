@@ -25,7 +25,7 @@ export function chromiumPath() {
 export async function launch() {
   return chromium.launch({
     executablePath: chromiumPath(),
-    args: ['--use-angle=swiftshader', '--use-gl=angle', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--no-sandbox']
+    args: ['--use-angle=swiftshader', '--use-gl=angle', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--no-sandbox', '--disable-dev-shm-usage']
   });
 }
 
