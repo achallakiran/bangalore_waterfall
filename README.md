@@ -97,5 +97,5 @@ Settings > Physics > New drives the vehicle on wheels with a radius, springs and
 ## 2.11.0: road damage, rocks and pebbles
 Editor 2 has a new Road damage section (hairline crack, crack, small and large pothole, broken strip, Mend road). These remove real road blocks, saved as `layers.cuts`. Roadside gains Rock, Boulder, Rock scatter and Pebbles. Hill Loop itself is unchanged. Classic physics sees a cut as lowered ground; Physics: New drops the wheels in.
 
-## 2.11.1: rocks have height, cuts bite
-Small rocks and pebbles are ground bumps the wheels drive over; only a tall rock (radius over 0.55 m) is solid. Road cuts slow and wobble the vehicle in Classic and in New physics. Test: npm run test:rocks.
+## 2.12.0: buildings load ahead, higher building limit
+Scenery near or ahead of the vehicle is built before far ground, and a building within 35 m is always built, so there are no ghost buildings and no invisible blockers. Buildings far behind a fast vehicle are released sooner. The building limit is now 300 (shops 200). Test: tests/ghost.mjs.

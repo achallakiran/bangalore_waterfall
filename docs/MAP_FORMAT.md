@@ -69,7 +69,7 @@ Maps made in the editor may carry a `features` section. The current game ignores
 Items the editor makes carry an `id` so they can be found again. Any other field is ignored by the game.
 
 ## Limits (memory safety)
-Up to 2 MB per file, 64 roads, 4000 scenery items, 20000 shapes, 600 potholes. These can be raised later once streaming (Phase 3) is in.
+Up to 2 MB per file, 64 roads, 300 buildings (pads), 200 shops, 4000 scenery items, 20000 shapes, 600 potholes. These can be raised later once streaming (Phase 3) is in.
 
 ## Big maps
 If a map is too big to keep whole in memory for the device's budget, it is streamed around the player (see README, Memory budget). Nothing in the file changes; keep `slab` as large as the world really is (up to 1000 m).

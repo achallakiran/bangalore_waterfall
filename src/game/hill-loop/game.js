@@ -542,7 +542,7 @@ async function rebuild() {
 // Used when the estimated cube count exceeds the device budget. The ground is built one 12 m chunk at a time
 // (cube-for-cube the same as the whole build), scenery one 16 m tile at a time. Chunks and tiles far from the
 // player are disposed, so memory stays under the budget however big the map is.
-const STREAM_MAX_R = 100, STREAM_MS = 5;
+const STREAM_MAX_R = 100, STREAM_MS = 5, TILE_NEAR = 60, TILE_HARD = 26;
 async function rebuildStreamed(id, v, t0) {
   const car = voxelize(mods.car, CAR_MIN, CAR_MAX, v, 4), bike = voxelize(mods.bike, BIKE_MIN, BIKE_MAX, v, 2), auto = voxelize(mods.auto, AUTO_MIN, AUTO_MAX, v, 3);
   if (id !== buildId) return;
@@ -550,7 +550,7 @@ async function rebuildStreamed(id, v, t0) {
   const grid = World.chunkGrid(v), store = World.createChunkStore(grid), ti = tileIndex(mods.objects, v);
   const perChunk = Math.pow(grid.CH / v, 2) * 1.35;
   stream = { v, grid, store, ti, chunks: new Map(), tiles: new Map(), groundCubes: 0, tileCubes: 0, peak: 0, pa: -1, pb: -1, want: [], wantSet: new Set(), eff: 0,
-    maxChunks: Math.max(9, Math.floor(mem.plan.groundBudget / perChunk)), tileBudget: Math.floor(mem.plan.budget * 0.15), vehicleCubes: car.count * 2 + bike.count * 2 + auto.count };
+    perChunk, maxChunks: Math.max(9, Math.floor(mem.plan.groundBudget / perChunk)), tileBudget: Math.floor(mem.plan.budget * 0.15), vehicleCubes: car.count * 2 + bike.count * 2 + auto.count };
   A.pCar.inner.add(makeMesh(car, true)); A.nCar.inner.add(makeMesh(car, true));
   A.pBike.inner.add(makeMesh(bike, true)); A.nBike.inner.add(makeMesh(bike, true));
   A.nAuto.inner.add(makeMesh(auto, true));
@@ -569,7 +569,8 @@ function streamPlan() {
     if (d <= STREAM_MAX_R) cand.push({ a, b, d, key: a + ',' + b });
   }
   cand.sort((p, q) => p.d - q.d);
-  S.want = cand.slice(0, S.maxChunks);
+  const over = Math.max(0, S.tileCubes - S.tileBudget);   // scenery built close to the player beyond its share is paid for by a smaller ring of far ground
+  S.want = cand.slice(0, Math.max(9, S.maxChunks - Math.ceil(over / S.perChunk)));
   S.wantSet = new Set(S.want.map(c => c.key));
   S.eff = S.want.length ? S.want[S.want.length - 1].d : 0;
   // Build order: chunks ahead of a moving vehicle first (what is loaded and kept is still decided by distance alone).
@@ -585,8 +586,11 @@ function streamPlan() {
     const d = Math.hypot(g.x0 + (c.a + 0.5) * CH - px, g.z0 + (c.b + 0.5) * CH - pz);
     if (d > S.eff + CH * 0.75) streamDropChunk(key);
   });
+  // Scenery nobody is about to need is let go: far outside the ring, and (when driving) well behind the vehicle, which frees budget for what is ahead.
+  const keep = Math.max(S.eff + 8 + S.ti.T, TILE_NEAR + 44 + S.ti.T), hx = Math.cos(P.psi), hz = -Math.sin(P.psi), fast = Math.abs(P.v) > 6, sg = P.v >= 0 ? 1 : -1;
   S.tiles.forEach((t, key) => {
-    if (Math.hypot((t.tx + 0.5) * S.ti.T - px, (t.tz + 0.5) * S.ti.T - pz) > S.eff + 8 + S.ti.T) streamDropTile(key);
+    const dx = (t.tx + 0.5) * S.ti.T - px, dz = (t.tz + 0.5) * S.ti.T - pz, d = Math.hypot(dx, dz);
+    if (d > keep || (fast && d > TILE_NEAR + 20 && sg * (dx * hx + dz * hz) / d < -0.6 && d > keep * 0.6)) streamDropTile(key);
   });
 }
 function streamDropChunk(key) {
@@ -600,9 +604,51 @@ function streamDropTile(key) {
   S.tileCubes -= t.count; S.tiles.delete(key);
 }
 // Load the nearest missing chunks (and tiles). ms = time budget; n = minimum number to load regardless of time.
+// Scenery tiles are loaded by need, not last: a building the vehicle is about to reach is built before far ground, nearest and
+// straight-ahead first, and a tile within TILE_HARD metres of the player is always built even when the tile budget is full (the farthest or the one
+// behind is dropped to make room). Collision exists for every building from the start, so an unbuilt near tile would be an invisible wall.
+
+function tileNeeds(maxD) {
+  const S = stream, T = S.ti.T, hx = Math.cos(P.psi), hz = -Math.sin(P.psi), sg = P.v >= 0 ? 1 : -1, moving = Math.abs(P.v) > 1, need = [];
+  S.ti.tiles.forEach((t, key) => {
+    if (S.tiles.has(key)) return;
+    const dx = (t.tx + 0.5) * T - P.x, dz = (t.tz + 0.5) * T - P.z, d = Math.hypot(dx, dz);
+    if (d > maxD) return;
+    need.push({ t, key, d, pri: d < TILE_HARD ? d - 1000 : moving ? d - 14 * sg * (dx * hx + dz * hz) / (d || 1) : d });
+  });
+  need.sort((p, q) => p.pri - q.pri);
+  return need;
+}
+function tileEvictFor(d) { // make room by dropping the built tile farthest from the player, if it is farther than d
+  const S = stream, T = S.ti.T; let worst = null, wd = d;
+  const hx = Math.cos(P.psi), hz = -Math.sin(P.psi), sg = P.v >= 0 ? 1 : -1, mv = Math.abs(P.v) > 1;
+  S.tiles.forEach((t, key) => {
+    const dx = (t.tx + 0.5) * T - P.x, dz = (t.tz + 0.5) * T - P.z, dd = Math.hypot(dx, dz) + (mv && sg * (dx * hx + dz * hz) < 0 ? 30 : 0);   // tiles behind go first
+    if (dd > wd && Math.hypot(dx, dz) > TILE_HARD) { wd = dd; worst = key; }   // a tile close to the player is never given up
+  });
+  if (worst === null) return false;
+  streamDropTile(worst); return true;
+}
+function streamBuildTile(ni) {
+  const S = stream, { t, key } = ni, d = voxelTile(t, S.ti.T, S.v, 1);
+  let m = null;
+  if (d.count > 0) { m = makeMesh({ count: d.count, pos: d.pos, col: d.col, v: S.v }, true); worldRoot.add(m); }
+  S.tiles.set(key, { tx: t.tx, tz: t.tz, mesh: m, count: d.count });
+  S.tileCubes += d.count;
+  if (S.tileCubes > S.tileBudget) S.pa = -1;   // replan so the ground ring shrinks to fit
+}
 function streamPump(ms, n) {
   const S = stream, T0 = performance.now(), CH = S.grid.CH;
   let loaded = 0;
+  // 1. scenery close to the player (and straight ahead) first
+  const nearList = tileNeeds(TILE_NEAR + (Math.abs(P.v) > 1 ? Math.min(40, Math.abs(P.v) * 1.5) : 0));
+  for (let i = 0; i < nearList.length; i++) {
+    if (loaded >= n && performance.now() - T0 > ms) return true;
+    const ni = nearList[i];
+    if (S.tileCubes >= S.tileBudget && !tileEvictFor(ni.d) && ni.d > TILE_HARD) continue;   // full, nothing farther to drop: only scenery within TILE_HARD metres is built regardless
+    streamBuildTile(ni); loaded++;
+  }
+  // 2. ground chunks
   const order = S.order || S.want;
   for (let i = 0; i < order.length; i++) {
     const w = order[i];
@@ -617,22 +663,12 @@ function streamPump(ms, n) {
     S.store.set(w.a, w.b, r.hf);
     S.groundCubes += r.chunk.count; loaded++;
   }
-  const T = S.ti.T, R = S.eff + 8 + T * 0.5;
-  const need = [];
-  S.ti.tiles.forEach((t, key) => {
-    if (S.tiles.has(key)) return;
-    const d = Math.hypot((t.tx + 0.5) * T - P.x, (t.tz + 0.5) * T - P.z);
-    if (d <= R) need.push({ t, key, d });
-  });
-  need.sort((p, q) => p.d - q.d);
+  // 3. farther scenery inside the ring, while the budget allows
+  const need = tileNeeds(S.eff + 8 + S.ti.T * 0.5);
   for (let i = 0; i < need.length; i++) {
     if (S.tileCubes >= S.tileBudget) break;
     if (loaded >= n && performance.now() - T0 > ms) return true;
-    const { t, key } = need[i], d = voxelTile(t, T, S.v, 1);
-    let m = null;
-    if (d.count > 0) { m = makeMesh({ count: d.count, pos: d.pos, col: d.col, v: S.v }, true); worldRoot.add(m); }
-    S.tiles.set(key, { tx: t.tx, tz: t.tz, mesh: m, count: d.count });
-    S.tileCubes += d.count; loaded++;
+    streamBuildTile(need[i]); loaded++;
   }
   S.peak = Math.max(S.peak, S.groundCubes + S.tileCubes + S.vehicleCubes);
   return false;
@@ -1455,7 +1491,7 @@ function unbuiltNear(R) {
   }
   return { streaming: true, near, unbuilt, tiles: S.tiles.size, tileCubes: S.tileCubes, tileBudget: S.tileBudget };
 }
-const dbg = { unbuiltNear, get physics() { return hooks.physics; }, get rocks() { return ROCKS.size + '/' + PEBS.length; }, rockBump, get memory() { return api.memory; }, buildObjects, pushOut, inside, P, lap, state, SOLIDS, World, start, setCam, keys, A, gY, NPC, VEH, get HF() { return HF; }, potholeHit, setKind, step, inp, resetRun, lapUpdate, edge, FALL, fallReset, get kind() { return kind; }, get fog() { return scene.fog; }, get skyOn() { return sky.enabled; }, get order() { return stream && stream.order; } };
+const dbg = { unbuiltNear, streamTick: () => streamTick(), get physics() { return hooks.physics; }, get rocks() { return ROCKS.size + '/' + PEBS.length; }, rockBump, get memory() { return api.memory; }, buildObjects, pushOut, inside, P, lap, state, SOLIDS, World, start, setCam, keys, A, gY, NPC, VEH, get HF() { return HF; }, potholeHit, setKind, step, inp, resetRun, lapUpdate, edge, FALL, fallReset, get kind() { return kind; }, get fog() { return scene.fog; }, get skyOn() { return sky.enabled; }, get order() { return stream && stream.order; } };
 window.__loop = dbg;
 return { api, dispose, debug: dbg };
 

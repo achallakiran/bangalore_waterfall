@@ -4,7 +4,7 @@ import { sampleCurve } from '../engine/curve.js';
 export const FORMAT = 'hill-loop-map';
 export const VERSION = 1;
 // Limits protect phones from files that would build far too much.
-export const LIMITS = { maxBytes: 2000000, slabMin: 20, slabMax: 1000, maxEdges: 64, maxPads: 64, maxJunctions: 64, maxPotholes: 600, maxCuts: 40000, maxTraffic: 12, maxSignals: 64, maxCrossings: 64, maxSpawnAreas: 32, maxShops: 64, maxScenery: 4000, maxPrims: 20000, maxSculpt: 60000, maxPaint: 80000 };
+export const LIMITS = { maxBytes: 2000000, slabMin: 20, slabMax: 1000, maxEdges: 64, maxPads: 300, maxJunctions: 64, maxPotholes: 600, maxCuts: 40000, maxTraffic: 12, maxSignals: 64, maxCrossings: 64, maxSpawnAreas: 32, maxShops: 200, maxScenery: 4000, maxPrims: 20000, maxSculpt: 60000, maxPaint: 80000 };
 export const TRAFFIC_KEYS = ['nBike', 'nAuto'];
 export const SPAWN_KINDS = ['pedestrian', 'cow', 'buffalo', 'goat', 'dog', 'vehicle'];
 export const SCENERY_TYPES = ['prims', 'windows', 'tree', 'lamp', 'bldgN', 'bldgY', 'guardposts', 'cones', 'scatter', 'rock', 'pebbles'];
