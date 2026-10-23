@@ -11,17 +11,17 @@ function hash3(i, j, k, s) {
 }
 
 // Surface kinds (fixed by the engine, not by maps)
-const K = { GRASS: 0, ROAD: 1, EDGE: 2, DASH: 3, ZEBRA: 4, KERB: 5, WATER: 6, SAND: 7, CHKD: 8, CHKW: 9, PIT: 10, RIM: 11, SCRUB: 12, LATER: 13, ROCK: 14, ROCK2: 15, SOIL: 16, WALL: 17, PITWALL: 18, PAVER: 19 };
+const K = { GRASS: 0, ROAD: 1, EDGE: 2, DASH: 3, ZEBRA: 4, KERB: 5, WATER: 6, SAND: 7, CHKD: 8, CHKW: 9, PIT: 10, RIM: 11, SCRUB: 12, LATER: 13, ROCK: 14, ROCK2: 15, SOIL: 16, WALL: 17, PITWALL: 18, PAVER: 19, CRACK: 20 };
 const COLS = [];
 COLS[K.GRASS] = [0x6FBF4A, 0.1]; COLS[K.ROAD] = [0x4B5159, 0.04]; COLS[K.EDGE] = [0xE9EDEF, 0]; COLS[K.DASH] = [0xF3E9B5, 0];
 COLS[K.ZEBRA] = [0xF4F1EA, 0]; COLS[K.KERB] = [0xC7C2B6, 0.05]; COLS[K.WATER] = [0x4FA3D1, 0.06]; COLS[K.SAND] = [0xE6D6A2, 0.06];
 COLS[K.CHKD] = [0x23252B, 0]; COLS[K.CHKW] = [0xF4F1EA, 0]; COLS[K.PIT] = [0x1F1B18, 0.1]; COLS[K.RIM] = [0x7E8288, 0.08];
 COLS[K.SCRUB] = [0xC9B27A, 0.08]; COLS[K.LATER] = [0xB5694A, 0.08]; COLS[K.ROCK] = [0x8E959B, 0.07]; COLS[K.ROCK2] = [0x717880, 0.08];
-COLS[K.PAVER] = [0xBDB6A6, 0.05]; COLS[K.SOIL] = [0x7B5A3C, 0.08]; COLS[K.WALL] = [0x9A9187, 0.06]; COLS[K.PITWALL] = [0x3A3029, 0.08];
+COLS[K.PAVER] = [0xBDB6A6, 0.05]; COLS[K.SOIL] = [0x7B5A3C, 0.08]; COLS[K.WALL] = [0x9A9187, 0.06]; COLS[K.PITWALL] = [0x3A3029, 0.08]; COLS[K.CRACK] = [0x2A2826, 0.05];
 const MULT = [];   // speed multiplier per surface
 MULT[K.GRASS] = 0.5; MULT[K.ROAD] = 1; MULT[K.EDGE] = 1; MULT[K.DASH] = 1; MULT[K.ZEBRA] = 1; MULT[K.KERB] = 0.85; MULT[K.WATER] = 0.3; MULT[K.SAND] = 0.45;
 MULT[K.CHKD] = 1; MULT[K.CHKW] = 1; MULT[K.PIT] = 1; MULT[K.RIM] = 1; MULT[K.SCRUB] = 0.55; MULT[K.LATER] = 0.5; MULT[K.ROCK] = 0.6; MULT[K.ROCK2] = 0.55;
-MULT[K.PAVER] = 0.85; MULT[K.SOIL] = 0.5; MULT[K.WALL] = 0.5; MULT[K.PITWALL] = 0.5;
+MULT[K.PAVER] = 0.85; MULT[K.SOIL] = 0.5; MULT[K.WALL] = 0.5; MULT[K.PITWALL] = 0.5; MULT[K.CRACK] = 1;
 // Surfaces the map editor can paint onto open ground (order = the code stored in the map's paint layer).
 export const PAINT_KINDS = ['grass', 'sand', 'scrub', 'later', 'rock', 'rock2', 'soil', 'paver'];
 const PAINT_K = [K.GRASS, K.SAND, K.SCRUB, K.LATER, K.ROCK, K.ROCK2, K.SOIL, K.PAVER];
@@ -126,9 +126,13 @@ export function createWorld(map) {
   // Sparse and keyed by lattice cell, so an untouched map pays nothing and a stream chunk only meets the cells it covers.
   const LY = map.layers || null;
   const lkey = (i, j) => (i + 20000) * 40001 + (j + 20000);
-  let SC = null, PN = null;
+  let SC = null, PN = null, CUT = null;
   if (LY && LY.sculpt && LY.sculpt.cells.length) { SC = new Map(); LY.sculpt.cells.forEach(c => SC.set(lkey(c[0], c[1]), c[2] / 100)); }
   if (LY && LY.paint && LY.paint.cells.length) { PN = new Map(); LY.paint.cells.forEach(c => PN.set(lkey(c[0], c[1]), PAINT_K[c[2]])); }
+  // Road cuts (v2.11): cracks and potholes cut by hand. A 0.25 m lattice of depths in centimetres; below 5 cm is a surface crack (colour only),
+  // from 5 cm the road blocks are really taken out (a pit the wheels can drop into). Untouched maps pay nothing.
+  if (LY && LY.cuts && LY.cuts.cells.length) { CUT = new Map(); LY.cuts.cells.forEach(c => CUT.set(lkey(c[0], c[1]), c[2])); }
+  const cutAt = (x, z) => (CUT ? (CUT.get(lkey(Math.floor(x * 4), Math.floor(z * 4))) || 0) : 0);
   function sculptAt(x, z) {
     const fx = Math.floor(x), fz = Math.floor(z), tx = x - fx, tz = z - fz;
     const a = SC.get(lkey(fx, fz)) || 0, b = SC.get(lkey(fx + 1, fz)) || 0, c = SC.get(lkey(fx, fz + 1)) || 0, d = SC.get(lkey(fx + 1, fz + 1)) || 0;
@@ -220,6 +224,10 @@ export function createWorld(map) {
           const p = POTS[i], dx = x - p.x, dz = z - p.z, d2 = dx * dx + dz * dz, rr = Math.max(p.r, 1.4 * v);
           if (d2 < rr * rr) { kind = K.PIT; out.depth = p.depth; break; }
           if (d2 < (rr + 0.3) * (rr + 0.3) && kind !== K.CHKD && kind !== K.CHKW && kind !== K.ZEBRA) kind = K.RIM;
+        }
+        if (CUT && kind !== K.CHKD && kind !== K.CHKW && kind !== K.ZEBRA) {
+          const cd = CUT.get(lkey(Math.floor(x * 4), Math.floor(z * 4)));
+          if (cd) { if (cd < 5) kind = K.CRACK; else { kind = K.PIT; out.depth = Math.max(1, Math.round(cd / 100 / v)); } }
         }
       }
       out.kind = kind; out.wall = 1;
@@ -426,5 +434,5 @@ export function createWorld(map) {
   }
 
   return { hasLoop: !OFF, L, R, HW, PAV, LTOT, SLAB, WATER, Y_MIN, Y_MAX, K, COLS, MULT, LINES, JUNC, FLATS, POTS, loopInfo, trackPoint, loopH, loopF, column, heightAt,
-    edgeLen, edgeH, edgePoint, inFlat, potholeAt, tarmacCount, buildGround, chunkGrid, buildChunk, createChunkStore, hfY, hfKind, S_EAST, S_WEST, S_FAR0, hash3, vn, biomes, pad, map };
+    edgeLen, edgeH, edgePoint, inFlat, potholeAt, cutAt, tarmacCount, buildGround, chunkGrid, buildChunk, createChunkStore, hfY, hfKind, S_EAST, S_WEST, S_FAR0, hash3, vn, biomes, pad, map };
 }

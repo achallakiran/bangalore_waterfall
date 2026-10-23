@@ -54,6 +54,8 @@ when you move a point. A two-point curve is the same road as a straight line.
 `layers` is optional and holds what the editor's sculpt and paint brushes make. Both are sparse lists keyed by a 0.5 m lattice cell.
 - `layers.sculpt`: `{ "cells": [[ix, iz, cm], ...] }`, height change in centimetres (limit +/-3000), up to 60000 cells. Heights between cells are blended smoothly.
   Sculpting is applied before flat building pads, so a pad always wins at its own spot. Roads and kerbs are never changed.
+- `layers.cuts`: `{ "cell": 0.25, "cells": [[ix, iz, depthCm], ...] }`, holes cut into the road on a 0.25 m lattice, depth 0 to 100 cm (limit 40000 cells). Under 5 cm is a painted crack only; deeper cells remove real road blocks, so the ground is lower there and a wheel drops in (feel it with Physics: New). Cells off the road are ignored.
+- Scenery `rock` `{ t, id, x, z, r, seed }` (solid) and `pebbles` `{ t, id, x, z, r, n, seed }` (decoration, driven over): `r` is the radius in metres, `n` the stone count, `seed` fixes the look.
 - `layers.paint`: `{ "cells": [[ix, iz, code], ...] }`, a surface code 0 to 7 (0 grass, 1 sand, 2 scrub, 3 laterite, 4 rock, 5 deep rock, 6 soil, 7 paver; `PAINT_KINDS` in `src/engine/world.js`), up to 80000 cells.
   Paint never covers water or road surfaces.
 Streamed and whole-map builds read the same layers, so both give the same ground.

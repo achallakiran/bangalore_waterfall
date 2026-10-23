@@ -25,8 +25,15 @@ export const SECTIONS = [
   { id: 'side', label: 'Roadside', tiles: [
     { id: 't-small', tool: 'tree', set: { tree: 'small' }, label: 'Tree', art: 't:small', tip: 'Click to plant a tree.' },
     { id: 't-big', tool: 'tree', set: { tree: 'big' }, label: 'Big tree', art: 't:big', tip: 'Click to plant a big tree.' },
+    { id: 'rock-s', tool: 'rock', set: { rock: 'small' }, label: 'Rock', art: 'sw:rock', tip: 'Click to place a small rock. Cars cannot drive through it.' },
+    { id: 'rock-b', tool: 'rock', set: { rock: 'big' }, label: 'Boulder', art: 'sw:rock', tip: 'Click to place a big rock.' },
+    { id: 'rock-x', tool: 'rock', set: { rock: 'scatter' }, label: 'Rock scatter', art: 'sw:rock', tip: 'Click to scatter a few rocks and pebbles around that spot.' },
+    { id: 'pebbles', tool: 'pebbles', set: {}, label: 'Pebbles', art: 'sw:sand', tip: 'Click to drop a patch of loose pebbles (decoration; you drive over them).' },
     { id: 'lamp', tool: 'lamp', set: {}, label: 'Lamp', art: 'lamp', tip: 'Click to place a street lamp.' }
   ] },
+  { id: 'damage', label: 'Road damage', tiles: [
+    ['hairline', 'Hairline'], ['crack', 'Crack'], ['pothole', 'Small hole'], ['pothole2', 'Large hole'], ['strip', 'Broken strip'], ['fill', 'Mend road']
+  ].map(([k, l]) => ({ id: 'cut-' + k, tool: 'cut', set: { cut: k }, label: l, art: 'cut:' + k, tip: (k === 'fill' ? 'Drag over cuts to put the road blocks back.' : k === 'hairline' ? 'Drag a thin surface crack along the road.' : k === 'crack' ? 'Drag a crack with real depth along the road.' : k === 'strip' ? 'Drag across the road to cut a trench.' : 'Click on the road to break out a hole.') + ' Real blocks are removed: wheels drop into them (Physics: New).' })) },
   { id: 'traffic', label: 'Traffic', tiles: [
     { id: 'sig-light', tool: 'signal', set: { sig: 'light' }, label: 'Signal', art: 'signal', tip: 'Click to place a traffic light (used in a later version).' },
     { id: 'sig-police', tool: 'signal', set: { sig: 'police' }, label: 'Police', art: 'police', tip: 'Click to place a traffic police post (used in a later version).' },
@@ -91,6 +98,23 @@ function drawArt(art, S) {
     const k = art.slice(3); drawSwatch(c, SW[k] || '#888', S, true);
     if (k === 'hills') { c.fillStyle = 'rgba(0,0,0,0.22)'; c.beginPath(); c.moveTo(S * 0.1, S * 0.8); c.lineTo(S * 0.4, S * 0.3); c.lineTo(S * 0.65, S * 0.8); c.fill(); c.fillStyle = 'rgba(255,255,255,0.25)'; c.beginPath(); c.moveTo(S * 0.45, S * 0.8); c.lineTo(S * 0.68, S * 0.42); c.lineTo(S * 0.9, S * 0.8); c.fill(); }
     if (k === 'erase') { c.strokeStyle = '#C0392B'; c.lineWidth = 4; c.beginPath(); c.moveTo(S * 0.25, S * 0.25); c.lineTo(S * 0.75, S * 0.75); c.moveTo(S * 0.75, S * 0.25); c.lineTo(S * 0.25, S * 0.75); c.stroke(); }
+    return cv;
+  }
+  if (art.startsWith('cut:')) {
+    const k = art.slice(4);
+    c.fillStyle = '#6B7078'; c.fillRect(0, 0, S, S);
+    c.fillStyle = '#2A2826'; c.strokeStyle = '#2A2826'; c.lineCap = 'round';
+    if (k === 'hairline' || k === 'crack' || k === 'strip') {
+      c.lineWidth = k === 'hairline' ? S * 0.03 : k === 'crack' ? S * 0.07 : S * 0.16;
+      c.beginPath(); c.moveTo(S * 0.1, S * 0.7); c.lineTo(S * 0.35, S * 0.4); c.lineTo(S * 0.55, S * 0.6); c.lineTo(S * 0.9, S * 0.25); c.stroke();
+    } else if (k === 'fill') {
+      c.fillStyle = '#2A2826'; c.beginPath(); c.ellipse(S * 0.5, S * 0.5, S * 0.28, S * 0.2, 0.3, 0, 7); c.fill();
+      c.strokeStyle = '#2E9E57'; c.lineWidth = S * 0.07; c.beginPath(); c.moveTo(S * 0.28, S * 0.52); c.lineTo(S * 0.45, S * 0.68); c.lineTo(S * 0.74, S * 0.32); c.stroke();
+    } else {
+      const r = k === 'pothole' ? S * 0.17 : S * 0.3; c.beginPath();
+      for (let i = 0; i <= 12; i++) { const a = i / 12 * 6.2832, q = r * (0.85 + 0.25 * Math.sin(i * 2.3)); const X = S / 2 + Math.cos(a) * q, Y = S / 2 + Math.sin(a) * q * 0.8; i ? c.lineTo(X, Y) : c.moveTo(X, Y); }
+      c.closePath(); c.fill();
+    }
     return cv;
   }
   c.fillStyle = bg; c.fillRect(0, 0, S, S);

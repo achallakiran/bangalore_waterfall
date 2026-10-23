@@ -41,7 +41,7 @@ await page.waitForFunction(() => { const i = document.querySelector('.ed-tool[da
 const pics = await page.evaluate(() => [...document.querySelectorAll('.ed-tiles .ed-tool img')].map(i => i.src.length));
 ok(pics.length === 5 && pics.every(n => n > 3000), `the Buildings tab shows 5 picture tiles drawn from the real pieces (picture sizes ${pics.join(', ')})`);
 const labels = await page.evaluate(() => [...document.querySelectorAll('.ed-tab')].map(b => b.textContent));
-ok(labels.length === 6, 'the tray has six sections: ' + labels.join(', '));
+ok(labels.length === 7, 'the tray has seven sections: ' + labels.join(', '));
 await page.screenshot({ path: path.join(OUT, 'editor-tray.png') });
 
 // ---- camera ----

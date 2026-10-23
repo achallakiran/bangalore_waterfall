@@ -4,10 +4,10 @@ import { sampleCurve } from '../engine/curve.js';
 export const FORMAT = 'hill-loop-map';
 export const VERSION = 1;
 // Limits protect phones from files that would build far too much.
-export const LIMITS = { maxBytes: 2000000, slabMin: 20, slabMax: 1000, maxEdges: 64, maxPads: 64, maxJunctions: 64, maxPotholes: 600, maxTraffic: 12, maxSignals: 64, maxCrossings: 64, maxSpawnAreas: 32, maxShops: 64, maxScenery: 4000, maxPrims: 20000, maxSculpt: 60000, maxPaint: 80000 };
+export const LIMITS = { maxBytes: 2000000, slabMin: 20, slabMax: 1000, maxEdges: 64, maxPads: 64, maxJunctions: 64, maxPotholes: 600, maxCuts: 40000, maxTraffic: 12, maxSignals: 64, maxCrossings: 64, maxSpawnAreas: 32, maxShops: 64, maxScenery: 4000, maxPrims: 20000, maxSculpt: 60000, maxPaint: 80000 };
 export const TRAFFIC_KEYS = ['nBike', 'nAuto'];
 export const SPAWN_KINDS = ['pedestrian', 'cow', 'buffalo', 'goat', 'dog', 'vehicle'];
-export const SCENERY_TYPES = ['prims', 'windows', 'tree', 'lamp', 'bldgN', 'bldgY', 'guardposts', 'cones', 'scatter'];
+export const SCENERY_TYPES = ['prims', 'windows', 'tree', 'lamp', 'bldgN', 'bldgY', 'guardposts', 'cones', 'scatter', 'rock', 'pebbles'];
 const PRIM_ARITY = { B: 9, PT: 8, C: 9, S: 7, OB: 10, OPT: 9 };   // tag + fields
 
 export function validateMap(m) {
@@ -218,6 +218,8 @@ export function validateMap(m) {
         if (arr(p + '.cols', it.cols, 1, 16)) it.cols.forEach((v, j) => colour(p + '.cols[' + j + ']', v));
         break;
       case 'tree': ['x', 'z'].forEach(k => num(p + '.' + k, it[k], -5000, 5000)); num(p + '.h', it.h, 0.5, 60); num(p + '.r', it.r, 0.2, 20); break;
+      case 'rock': ['x', 'z'].forEach(k => num(p + '.' + k, it[k], -5000, 5000)); num(p + '.r', it.r, 0.1, 6); if (it.seed !== undefined) num(p + '.seed', it.seed, 0, 1e6); break;
+      case 'pebbles': ['x', 'z'].forEach(k => num(p + '.' + k, it[k], -5000, 5000)); num(p + '.r', it.r, 0.2, 10); num(p + '.n', it.n, 1, 60); if (it.seed !== undefined) num(p + '.seed', it.seed, 0, 1e6); break;
       case 'lamp': ['x', 'z'].forEach(k => num(p + '.' + k, it[k], -5000, 5000)); if (it.e !== 1 && it.e !== -1) err(p + '.e', 'must be 1 or -1'); padRef(p + '.y0', it.y0); break;
       case 'bldgN':
         if (typeof it.pad !== 'string' || !padIds.has(it.pad)) err(p + '.pad', 'refers to a pad that does not exist');
@@ -281,6 +283,7 @@ export function validateMap(m) {
       };
       cells('sculpt', LIMITS.maxSculpt, 1, -3000, 3000);
       cells('paint', LIMITS.maxPaint, 0.5, 0, 7);
+      cells('cuts', LIMITS.maxCuts, 0.25, 0, 100);
     }
   }
   // features (optional): things the editor places that later versions of the game bring to life. The current game ignores them.

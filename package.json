@@ -1,6 +1,6 @@
 {
   "name": "hill-loop-v2",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "private": true,
   "type": "module",
   "description": "Hill Loop Track v2: voxel hill-road driving game (shell, install, controls)",
@@ -20,6 +20,7 @@
     "test:editor2": "node tests/editor2.mjs",
     "test:touch": "node tests/touch.mjs",
     "test:blank": "node tests/blank.mjs",
+    "test:cuts": "node tests/cuts.mjs",
     "test:shape": "node tests/shape.mjs"
   },
   "devDependencies": {

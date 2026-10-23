@@ -35,7 +35,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   let tool = 'select', selected = null, W = null, ground = null, dirtyGround = true, groundT = 0, raf = 0, saveT = 0, disposed = false;
   let handOn = false, gesture = '', diagOn = false, fpsN = 0, fpsT = performance.now(), fps = 0, stepMs = 0, ext = null, lastDistDraw = 0;
   let drag = null, hover = null, spaceDown = false, errors = [], warns = [], lines = null;
-  const opts = { h0: '', h1: '', slopeH: 2, blob: 'hills', blobSize: 8, bh: 6, shopName: 'Corner Store', lampE: 1, sig: 'light', cross: 6, spawn: 'pedestrian', spawnN: 3, curve: false, style: 'house', tree: 'small', brush: 'raise', paint: 'grass', brushD: 8, brushS: 0.4, faceRoad: true, yaw: 0 };
+  const opts = { h0: '', h1: '', slopeH: 2, blob: 'hills', blobSize: 8, bh: 6, shopName: 'Corner Store', lampE: 1, sig: 'light', cross: 6, spawn: 'pedestrian', spawnN: 3, curve: false, style: 'house', tree: 'small', rock: 'small', brush: 'raise', paint: 'grass', brushD: 8, brushS: 0.4, faceRoad: true, yaw: 0, cut: 'pothole', cutD: 20, cutR: 0.4, cutF: 1, rock: 'rock', rockS: 1.2 };
 
   // ---------- layout ----------
   const cv = el('canvas', { class: 'ed-canvas', tabindex: '0', 'aria-label': 'Map canvas' });
@@ -161,7 +161,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   // ---------- the ground picture ----------
   const KCOL = () => {
     const K = W.K, t = {};
-    [K.ROAD, K.EDGE, K.DASH, K.ZEBRA, K.CHKD, K.CHKW, K.PIT, K.RIM].forEach(k => t[k] = [75, 81, 89]);
+    [K.ROAD, K.EDGE, K.DASH, K.ZEBRA, K.CHKD, K.CHKW, K.PIT, K.RIM, K.CRACK].forEach(k => t[k] = [75, 81, 89]);
     t[K.KERB] = [199, 194, 182]; t[K.WATER] = [79, 163, 209]; t[K.SAND] = [230, 214, 162]; t[K.GRASS] = [111, 191, 74];
     t[K.SCRUB] = [201, 178, 122]; t[K.LATER] = [181, 105, 74]; t[K.ROCK] = [142, 149, 155]; t[K.ROCK2] = [113, 120, 128];
     return t;
@@ -243,6 +243,8 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     // trees and lamps
     m.scenery.forEach(t => {
       if (t.t === 'tree') { c.fillStyle = 'rgba(30,110,50,0.85)'; c.strokeStyle = sel(t.id) ? '#fff' : '#12381d'; c.lineWidth = sel(t.id) ? 3 : 1.5; c.beginPath(); c.arc(X(t.x), Z(t.z), Math.max(3, t.r * s), 0, 6.3); c.fill(); c.stroke(); }
+      if (t.t === 'rock') { c.fillStyle = '#8E959B'; c.strokeStyle = sel(t.id) ? '#fff' : '#3a3f44'; c.lineWidth = sel(t.id) ? 3 : 1.5; c.beginPath(); c.arc(X(t.x), Z(t.z), Math.max(2.5, t.r * s), 0, 6.3); c.fill(); c.stroke(); }
+      if (t.t === 'pebbles') { c.fillStyle = sel(t.id) ? '#fff' : '#9A9690'; for (let i = 0; i < Math.min(t.n, 12); i++) { const a = i * 2.4, d = Math.sqrt((i + 0.5) / 12) * t.r; c.beginPath(); c.arc(X(t.x + Math.cos(a) * d), Z(t.z + Math.sin(a) * d), 1.6, 0, 6.3); c.fill(); } }
       if (t.t === 'lamp') { c.fillStyle = '#F2C200'; c.strokeStyle = sel(t.id) ? '#fff' : '#222'; c.lineWidth = sel(t.id) ? 3 : 1.5; c.beginPath(); c.arc(X(t.x), Z(t.z), Math.max(3, 0.5 * s), 0, 6.3); c.fill(); c.stroke(); }
     });
     // crossings
@@ -283,7 +285,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
       else { c.strokeRect(X(Math.min(drag.a[0], p[0])), Z(Math.min(drag.a[1], p[1])), Math.abs(p[0] - drag.a[0]) * s, Math.abs(p[1] - drag.a[1]) * s); }
       c.setLineDash([]);
     }
-    if (hover && (tool === 'tree' || tool === 'lamp' || tool === 'signal' || tool === 'terrain')) {
+    if (hover && (tool === 'tree' || tool === 'rock' || tool === 'pebbles' || tool === 'lamp' || tool === 'signal' || tool === 'terrain')) {
       c.strokeStyle = 'rgba(255,255,255,0.8)'; c.lineWidth = 1.5; c.beginPath();
       if (tool === 'terrain') c.ellipse(X(hover[0]), Z(hover[1]), opts.blobSize * s, opts.blobSize * s, 0, 0, 6.3); else c.arc(X(hover[0]), Z(hover[1]), 6, 0, 6.3);
       c.stroke();
@@ -334,6 +336,13 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     }
     if (tool === 'slope') rows.push(num('Height at the point (m)', 'slopeH', -3, 11, 0.5));
     if (tool === 'terrain') rows.push(num('Radius (m)', 'blobSize', 2, 40, 1));
+    if (tool === 'cut') {
+      const ck = ED.CUT_KINDS[opts.cut] || ED.CUT_KINDS.pothole;
+      if (ck.mode === 'disc') rows.push(num('Size (radius, m)', 'cutR', 0.2, 1.6, 0.1));
+      if (ck.mode === 'fill') rows.push(num('Mend size (radius, m)', 'cutF', 0.25, 5, 0.25));
+      if (ck.mode !== 'fill' && opts.cut !== 'hairline') rows.push(num('Depth (cm)', 'cutD', 5, 60, 5));
+      rows.push(el('p', { class: 'ed-note', text: ck.tip + ' These break the road itself: wheels drop into them. Only road blocks are cut; undo with Ctrl+Z.' }));
+    }
     if (tool === 'sculpt' || tool === 'paint') {
       rows.push(num('Brush size (m across)', 'brushD', 2, 40, 1));
       if (tool === 'sculpt' && opts.brush !== 'grade') rows.push(num('Strength (m per stroke)', 'brushS', 0.1, 2, 0.1));
@@ -381,6 +390,14 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
         case 'select': { selected = pickAny(e); refreshUi(); draw(); break; }
         case 'terrain': growPts = [[x, z]]; commit(() => ED.addBlob(m, opts.blob, x, z, opts.blobSize, opts.blobSize, 1), true, spanBox(x, z, opts.blobSize * 3)); break;
         case 'tree': { growPts = [[x, z]]; const t = TREES[opts.tree] || TREES.small, j = Math.abs(Math.round(x * 7 + z * 3)) % 9; commit(() => ED.addTree(m, x, z, t.h + j * 0.1, t.r + (Math.abs(Math.round(x + z * 5)) % 7) * 0.08), false); break; }
+        case 'rock': {
+          growPts = [[x, z]];
+          const R = { small: 0.35, big: 1.0 }, jr = (k) => { const q = Math.sin((x * 12.9898 + z * 78.233 + k * 37.719)) * 43758.5453; return q - Math.floor(q); };
+          if (opts.rock === 'scatter') commit(() => { for (let i = 0; i < 5; i++) { const a = jr(i) * 6.283, d = 0.3 + jr(i + 9) * 2.4; const r = ED.addRock(m, x + Math.cos(a) * d, z + Math.sin(a) * d, 0.15 + jr(i + 3) * 0.3); if (typeof r === 'string' && r[0] === '!') return r; } return ED.addPebbles(m, x, z, 16, 2.6); }, false);
+          else commit(() => ED.addRock(m, x, z, R[opts.rock] || 0.35), false);
+          break;
+        }
+        case 'pebbles': growPts = [[x, z]]; commit(() => ED.addPebbles(m, x, z, 14, 1.2), false); break;
         case 'lamp': growPts = [[x, z]]; commit(() => ED.addLamp(m, x, z, Number(opts.lampE)), false); break;
         case 'building': {
           const o = buildingPlan(x, z), big = Math.max(o.w, o.depth) / 2 + 6;
@@ -473,6 +490,13 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
   }
   // brush stamps
   function stamp(x, z, s) {
+    if (tool === 'cut') {
+      const ck = ED.CUT_KINDS[opts.cut] || ED.CUT_KINDS.pothole, box = spanBox(x, z, 4);
+      if (ck.mode === 'fill') return liveApply(m => ED.cutErase(m, x, z, numOpt('cutF', 1)), box, [x, z]);
+      if (ck.mode === 'disc') { if (s.done) return false; s.done = true; return liveApply(m => ED.cutDisc(m, x, z, numOpt('cutR', ck.r), numOpt('cutD', ck.depth)), box, [x, z]); }
+      const from = s.prev || [x, z]; s.prev = [x, z];
+      return liveApply(m => ED.cutLine(m, from[0], from[1], x, z, ck.width, opts.cut === 'hairline' ? ck.depth : numOpt('cutD', ck.depth), ck.wiggle), spanBox((x + from[0]) / 2, (z + from[1]) / 2, Math.hypot(x - from[0], z - from[1]) / 2 + 3), [x, z]);
+    }
     const r = clamp(numOpt('brushD', 8), 2, 40) / 2, box = spanBox(x, z, r + 3);
     if (tool === 'paint') return liveApply(m => ED.paintBrush(m, x, z, r, opts.paint), box, [x, z]);
     if (opts.brush === 'grade') return liveApply(m => ED.gradeTo(m, x, z, r * 0.7, s.level, r * 0.3 + 1), box, [x, z]);
@@ -491,6 +515,8 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
         if (b.t === 'bldgN') out.push({ id: b.id, kind, shape: 'obb', cx: (b.x0 + b.x1) / 2, cz: b.zf + b.depth / 2, hx: (b.x1 - b.x0) / 2, hz: b.depth / 2, c: 1, s: 0, y0, y1 });
         else { const a = (b.yaw || 0) * Math.PI / 180; out.push({ id: b.id, kind, shape: 'obb', cx: b.cx, cz: b.cz, hx: b.w / 2, hz: b.depth / 2, c: Math.cos(a), s: Math.sin(a), y0, y1 }); }
       } else if (b.t === 'tree' && b.id) { const y = w.heightAt(b.x, b.z); out.push({ id: b.id, kind: 'tree', shape: 'cyl', cx: b.x, cz: b.z, r: Math.max(0.9, b.r), y0: y, y1: y + b.h + b.r }); }
+      else if (b.t === 'rock' && b.id) { const y = w.heightAt(b.x, b.z); out.push({ id: b.id, kind: 'rock', shape: 'cyl', cx: b.x, cz: b.z, r: Math.max(0.5, b.r), y0: y, y1: y + b.r * 1.2 }); }
+      else if (b.t === 'pebbles' && b.id) { const y = w.heightAt(b.x, b.z); out.push({ id: b.id, kind: 'pebbles', shape: 'cyl', cx: b.x, cz: b.z, r: Math.max(0.5, b.r), y0: y, y1: y + 0.3 }); }
       else if (b.t === 'lamp' && b.id) { const y = w.heightAt(b.x, b.z); out.push({ id: b.id, kind: 'lamp', shape: 'cyl', cx: b.x, cz: b.z, r: 0.9, y0: y, y1: y + 4.5 }); }
     });
     return out;
@@ -548,7 +574,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
     if (selected && selected.id) {
       const b = itemBox(selected.id), it = ED.getItem(m, selected.id);
       if (b) ov.box(b[0], b[1], b[2] + 0.2, b[3] + 0.2, b[4], b[5], b[6], 0xffffff);
-      else if (it && (it.t === 'tree' || it.t === 'lamp')) ov.ring(it.x, it.z, Math.max(1, it.r || 0.8), 0xffffff, 0.3);
+      else if (it && (it.t === 'tree' || it.t === 'lamp' || it.t === 'rock' || it.t === 'pebbles')) ov.ring(it.x, it.z, Math.max(1, it.r || 0.8), 0xffffff, 0.3);
     }
     // extension handles
     const hr = Math.max(0.7, Math.min(14, v3.mpp() * 9));
@@ -570,7 +596,8 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
       const a = o.yaw * Math.PI / 180, fx = o.cx - Math.sin(a) * (o.depth / 2 + 1.5), fz = o.cz - Math.cos(a) * (o.depth / 2 + 1.5);
       ov.drape([[o.cx, o.cz], [fx, fz]], 0xffd23f, 0.5);
     } else if (hover && (tool === 'sculpt' || tool === 'paint')) ov.ring(hover[0], hover[1], numOpt('brushD', 8) / 2, 0xffffff, 0.4, 48);
-    else if (hover && (tool === 'tree' || tool === 'lamp' || tool === 'signal' || tool === 'terrain')) ov.ring(hover[0], hover[1], tool === 'terrain' ? opts.blobSize : 1, 0xffffff, 0.4);
+    else if (hover && tool === 'cut') { const ck = ED.CUT_KINDS[opts.cut] || ED.CUT_KINDS.pothole; ov.ring(hover[0], hover[1], ck.mode === 'disc' ? numOpt('cutR', ck.r) : ck.mode === 'fill' ? numOpt('cutF', 1) : Math.max(0.3, ck.width / 2), 0xffd23f, 0.6, 24); }
+    else if (hover && (tool === 'tree' || tool === 'rock' || tool === 'pebbles' || tool === 'lamp' || tool === 'signal' || tool === 'terrain')) ov.ring(hover[0], hover[1], tool === 'terrain' ? opts.blobSize : 1, 0xffffff, 0.4);
     if (tool === 'road' && opts.curve && curvePts.length) {
       const pts = curvePts.slice(); if (hover) pts.push([hover[0], hover[1]]);
       if (pts.length >= 2) { const c = sampleCurve(pts); ov.drape(c.xs.map((x, i) => [x, c.zs[i]]), 0xffffff, 0.5); }
@@ -633,8 +660,8 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
       if (hd.kind === 'ph') { const h = Math.round((hd.h + (hd.y0 - e.clientY) * v3.mpp() * 0.5) * 2) / 2; liveApply(m => ED.setRoadHeight(m, hd.edge, hd.t, h)); return true; }
     }
     if (stroke && q) {
-      const r = numOpt('brushD', 8) / 2;
-      if (!stroke.last || Math.hypot(q[0] - stroke.last[0], q[1] - stroke.last[1]) >= Math.max(0.6, r * 0.35)) { stroke.last = q; stamp(q[0], q[1], stroke); }
+      const r = numOpt('brushD', 8) / 2, gap = tool === 'cut' ? 0.3 : Math.max(0.6, r * 0.35);
+      if (!stroke.last || Math.hypot(q[0] - stroke.last[0], q[1] - stroke.last[1]) >= gap) { stroke.last = q; stamp(q[0], q[1], stroke); }
       return true;
     }
     return false;
@@ -704,7 +731,7 @@ export function mountEditor(root, { state, base, onExit, onPlay, onToast }) {
       else hd = { ...g, before: snap(), y0: e.clientY };
       return;
     }
-    if (tool === 'sculpt' || tool === 'paint') {
+    if (tool === 'sculpt' || tool === 'paint' || tool === 'cut') {
       stroke = { before: snap(), last: null, level: Math.round(WW().column(x, z, 0.25).h * 10) / 10 };
       stroke.last = [x, z]; stamp(x, z, stroke); return;
     }

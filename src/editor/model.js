@@ -368,6 +368,19 @@ export function addTree(map, x, z, h = 4, r = 1.5) {
   map.scenery.push({ t: 'tree', id, x: r2(x), z: r2(z), h: r2(clamp(h, 1, 20)), r: r2(clamp(r, 0.5, 8)) });
   return id;
 }
+// Rocks (solid, a car cannot drive through) and pebbles (loose small stones, decoration only). The seed fixes how they look.
+export function addRock(map, x, z, r = 0.5) {
+  if (map.scenery.length >= LIMITS.maxScenery) return '!Too many items.';
+  const id = nextId(map, 'k');
+  map.scenery.push({ t: 'rock', id, x: r2(x), z: r2(z), r: r2(clamp(r, 0.1, 6)), seed: Math.abs(Math.round(x * 31 + z * 17)) % 100000 });
+  return id;
+}
+export function addPebbles(map, x, z, n = 14, r = 1.2) {
+  if (map.scenery.length >= LIMITS.maxScenery) return '!Too many items.';
+  const id = nextId(map, 'p');
+  map.scenery.push({ t: 'pebbles', id, x: r2(x), z: r2(z), r: r2(clamp(r, 0.2, 10)), n: Math.round(clamp(n, 1, 60)), seed: Math.abs(Math.round(x * 13 + z * 29)) % 100000 });
+  return id;
+}
 // A street lamp; e = -1 leans toward -z, e = 1 toward +z (the arm over the road).
 export function addLamp(map, x, z, e = 1) {
   if (map.scenery.length >= LIMITS.maxScenery) return '!Too many items.';
@@ -410,7 +423,7 @@ export function hitTest(map, x, z, tol = 1.5, lines) {
   for (const s of (f.signals || [])) if (Math.hypot(x - s.x, z - s.z) <= tol) return { kind: 'signal', id: s.id };
   for (const s of (f.crossings || [])) if (Math.hypot(x - s.x, z - s.z) <= Math.max(tol, s.len / 2)) return { kind: 'crossing', id: s.id };
   for (const s of map.scenery) {
-    if ((s.t === 'tree' || s.t === 'lamp') && s.id && Math.hypot(x - s.x, z - s.z) <= tol) return { kind: s.t, id: s.id };
+    if ((s.t === 'tree' || s.t === 'lamp' || s.t === 'rock' || s.t === 'pebbles') && s.id && Math.hypot(x - s.x, z - s.z) <= (s.t === 'tree' || s.t === 'lamp' ? tol : Math.max(0.6, Math.min(tol, s.r + 0.3)))) return { kind: s.t, id: s.id };
   }
   for (const s of map.scenery) if (s.t === 'bldgY' && s.id) { const q = toLocal(s, x, z); if (Math.abs(q[0]) <= s.w / 2 && Math.abs(q[1]) <= s.depth / 2) return { kind: (f.shops || []).some(k => k.id === s.id) ? 'shop' : 'building', id: s.id }; }
   for (const s of map.scenery) if (s.t === 'bldgN' && s.id && x >= s.x0 && x <= s.x1 && z >= s.zf && z <= s.zf + s.depth) return { kind: (f.shops || []).some(q => q.id === s.id) ? 'shop' : 'building', id: s.id };
@@ -549,7 +562,7 @@ export { PAINT_KINDS };
 const lk = (i, j) => i + ',' + j;
 function openLayer(map, name) {
   if (!map.layers) map.layers = {};
-  if (!map.layers[name]) map.layers[name] = { cell: name === 'sculpt' ? 1 : 0.5, cells: [] };
+  if (!map.layers[name]) map.layers[name] = { cell: name === 'sculpt' ? 1 : name === 'cuts' ? 0.25 : 0.5, cells: [] };
   const L = map.layers[name], m = new Map();
   L.cells.forEach(c => m.set(lk(c[0], c[1]), c[2]));
   return { L, m };
@@ -613,6 +626,58 @@ export function paintBrush(map, x, z, radius, kind) {
   }
   return closeLayer(map, 'paint', L, m, LIMITS.maxPaint);
 }
+// ---------- Road cuts (v2.11): cracks and potholes are real missing road blocks ----------
+// A 0.25 m lattice; each cell holds the depth in centimetres (under 5 = a surface crack, colour only; 5 to 100 = blocks taken out).
+// Presets are only recipes that decide which cells to cut and how deep: the map stores the cells, so new kinds need no new format.
+export const CUT_KINDS = {
+  hairline: { label: 'Hairline crack', mode: 'line', width: 0.2, depth: 2, wiggle: 0.14, tip: 'Drag a thin wiggly surface crack along the road (no depth).' },
+  crack: { label: 'Crack', mode: 'line', width: 0.4, depth: 20, wiggle: 0.22, tip: 'Drag a crack with real depth along the road.' },
+  pothole: { label: 'Small pothole', mode: 'disc', r: 0.4, depth: 20, tip: 'Click on the road to break out a small round hole.' },
+  pothole2: { label: 'Large pothole', mode: 'disc', r: 0.9, depth: 40, tip: 'Click on the road to break out a large ragged hole.' },
+  strip: { label: 'Broken strip', mode: 'line', width: 0.8, depth: 20, wiggle: 0.12, tip: 'Drag across the road to cut a trench.' },
+  fill: { label: 'Mend road', mode: 'fill', r: 1, depth: 0, tip: 'Drag over cuts to put the road blocks back.' }
+};
+const cutCell = (i, j) => [(i + 0.5) / 4, (j + 0.5) / 4];
+function cutNoise(a, seed) { // smooth ragged outline: value in 0..1 for an angle
+  const n = 12, t = ((a / (2 * Math.PI)) % 1 + 1) % 1 * n, i = Math.floor(t), f = t - i, h = k => { let q = Math.imul(((k % n) + n) % n + seed * 131, 374761393); q = Math.imul(q ^ (q >>> 13), 1274126177); return ((q ^ (q >>> 16)) >>> 0) / 4294967296; };
+  const s = f * f * (3 - 2 * f); return h(i) * (1 - s) + h(i + 1) * s;
+}
+export function cutDisc(map, x, z, r, depthCm, ragged = true) {
+  r = clamp(r, 0.2, 2); depthCm = clamp(Math.round(depthCm), 5, 100);
+  const { L, m } = openLayer(map, 'cuts'), seed = Math.abs(Math.round(x * 13 + z * 7)) % 997;
+  for (let i = Math.floor((x - r * 1.4) * 4); i <= Math.floor((x + r * 1.4) * 4); i++) for (let j = Math.floor((z - r * 1.4) * 4); j <= Math.floor((z + r * 1.4) * 4); j++) {
+    const [cx, cz] = cutCell(i, j), d = Math.hypot(cx - x, cz - z), rr = r * (ragged ? 0.8 + 0.4 * cutNoise(Math.atan2(cz - z, cx - x), seed) : 1);
+    if (d > rr || !inSlab(map, cx, cz)) continue;
+    const dep = Math.max(5, Math.round(depthCm * (0.65 + 0.35 * clamp((1 - d / rr) * 2, 0, 1))));
+    if (dep > (m.get(lk(i, j)) || 0)) m.set(lk(i, j), dep);
+  }
+  return closeLayer(map, 'cuts', L, m, LIMITS.maxCuts);
+}
+// A crack or trench from one point to the next (a drag lays several of these end to end). Always touches at least the cells it crosses.
+export function cutLine(map, x0, z0, x1, z1, width, depthCm, wiggle = 0.15) {
+  width = clamp(width, 0.1, 2); depthCm = clamp(Math.round(depthCm), 1, 100);
+  const { L, m } = openLayer(map, 'cuts'), len = Math.hypot(x1 - x0, z1 - z0) || 0.01, nx = -(z1 - z0) / len, nz = (x1 - x0) / len;
+  const steps = Math.max(1, Math.ceil(len / 0.1));
+  for (let k = 0; k <= steps; k++) {
+    const t = k / steps, off = wiggle * Math.sin((x0 + (x1 - x0) * t) * 3.1 + (z0 + (z1 - z0) * t) * 2.3) * Math.cos((x0 + z0) * 1.7);
+    const px = x0 + (x1 - x0) * t + nx * off, pz = z0 + (z1 - z0) * t + nz * off, hw = width / 2;
+    for (let i = Math.floor((px - hw) * 4); i <= Math.floor((px + hw) * 4); i++) for (let j = Math.floor((pz - hw) * 4); j <= Math.floor((pz + hw) * 4); j++) {
+      const [cx, cz] = cutCell(i, j);
+      if ((Math.hypot(cx - px, cz - pz) > hw + 0.09 && !(Math.floor(px * 4) === i && Math.floor(pz * 4) === j)) || !inSlab(map, cx, cz)) continue;
+      const dep = depthCm < 5 ? depthCm : Math.max(5, depthCm - ((i * 7 + j * 13) % 3) * 2);
+      if (dep > (m.get(lk(i, j)) || 0)) m.set(lk(i, j), dep);
+    }
+  }
+  return closeLayer(map, 'cuts', L, m, LIMITS.maxCuts);
+}
+export function cutErase(map, x, z, radius) {
+  radius = clamp(radius, 0.2, 10);
+  const { L, m } = openLayer(map, 'cuts');
+  for (let i = Math.floor((x - radius) * 4); i <= Math.floor((x + radius) * 4); i++) for (let j = Math.floor((z - radius) * 4); j <= Math.floor((z + radius) * 4); j++) {
+    const [cx, cz] = cutCell(i, j); if (Math.hypot(cx - x, cz - z) <= radius) m.delete(lk(i, j));
+  }
+  return closeLayer(map, 'cuts', L, m, LIMITS.maxCuts);
+}
 export function clearLayers(map, which) {
   if (!map.layers) return false;
   if (which) delete map.layers[which]; else map.layers = {};
@@ -626,7 +691,7 @@ export function moveItem(map, id, x, z) {
   x = r2(x); z = r2(z);
   const b = map.scenery.find(s => s.id === id && (s.t === 'bldgN' || s.t === 'bldgY'));
   if (b) return moveBuilding(map, id, x, z);
-  const t = map.scenery.find(s => s.id === id && (s.t === 'tree' || s.t === 'lamp'));
+  const t = map.scenery.find(s => s.id === id && (s.t === 'tree' || s.t === 'lamp' || s.t === 'rock' || s.t === 'pebbles'));
   if (t) { t.x = x; t.z = z; if (t.t === 'lamp') t.y0 = r2(Math.max(0, groundHeightAt(map, x, z)) + 0.05); return true; }
   const f = ensureFeatures(map);
   const g = f.signals.find(s => s.id === id) || f.crossings.find(s => s.id === id);
@@ -701,6 +766,8 @@ export function duplicateItem(map, id, x, z) {
   }
   const t = map.scenery.find(s => s.id === id && s.t === 'tree'); if (t) return addTree(map, x, z, t.h, t.r);
   const l = map.scenery.find(s => s.id === id && s.t === 'lamp'); if (l) return addLamp(map, x, z, l.e);
+  const rk = map.scenery.find(s => s.id === id && s.t === 'rock'); if (rk) return addRock(map, x, z, rk.r);
+  const pb = map.scenery.find(s => s.id === id && s.t === 'pebbles'); if (pb) return addPebbles(map, x, z, pb.n, pb.r);
   const f = ensureFeatures(map);
   const g = f.signals.find(s => s.id === id); if (g) return addSignal(map, x, z, g.psi, g.kind);
   const c = f.crossings.find(s => s.id === id); if (c) return addCrossing(map, x, z, c.psi, c.len);

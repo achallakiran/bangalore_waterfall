@@ -93,3 +93,6 @@ tests/                harness, references, legacy builds (read only)
 ## 2.10.0: wheel-contact physics (optional)
 
 Settings > Physics > New drives the vehicle on wheels with a radius, springs and dampers instead of following the ground height. Falls, ledges, curbs and steep faces then come from the same contact model (no sticking to a cliff face at low speed). Classic stays the default and is unchanged. Code: `src/game/hill-loop/contact.js`; tests: `tests/contact.mjs`, `tests/phys-compare.mjs`, `tests/fall-new.mjs`. Known: pothole and fall feel under New still to be tuned on a device.
+
+## 2.11.0: road damage, rocks and pebbles
+Editor 2 has a new Road damage section (hairline crack, crack, small and large pothole, broken strip, Mend road). These remove real road blocks, saved as `layers.cuts`. Roadside gains Rock, Boulder, Rock scatter and Pebbles. Hill Loop itself is unchanged. Classic physics sees a cut as lowered ground; Physics: New drops the wheels in.

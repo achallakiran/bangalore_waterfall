@@ -102,3 +102,9 @@ Open the live github.io page on each device. Tick what works; note anything odd 
 - Settings > Physics > New: drive Hill Loop (car and bike); it should feel like Classic on the road, with no hopping at crests.
 - Raise a block in the editor and creep a vehicle off its edge at very low speed: it should leave the face and fall (Classic may stick).
 - Compare potholes and curbs against Classic and say if New feels too soft or too harsh.
+
+## 2.11.0 (road damage, rocks)
+- Editor 2: Road damage > Large pothole, click on a road; Hill Loop is not changed unless you save.
+- Drive over it in Physics: New: the wheel drops in, you feel a jolt and the pothole counter goes up.
+- Roadside > Rock scatter near a road: rocks block the car, pebbles do not.
+- Mend road removes cuts.

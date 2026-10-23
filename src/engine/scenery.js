@@ -112,6 +112,21 @@ function tree(P, x, z, h, r) {
   P.push(S(x - r * 0.5, y0 + h * 0.55 + r * 0.35, z + r * 0.3, r * 0.65, 0x367F38, 0.12));
   circ(x, z, 0.5);
 }
+function rockAt(P, x, z, r, seed) {
+  const y0 = gh(x, z), h = (k) => { let q = Math.imul((seed | 0) + k * 7919, 374761393); q = Math.imul(q ^ (q >>> 13), 1274126177); return ((q ^ (q >>> 16)) >>> 0) / 4294967296; };
+  const greys = [0x8E959B, 0x7B8289, 0x9A9690, 0x6F757C];
+  P.push(S(x, y0 + r * 0.4, z, r, greys[Math.floor(h(1) * 4)], 0.1));
+  if (r >= 0.4) P.push(S(x + r * (0.5 + h(2) * 0.4) * (h(3) < 0.5 ? -1 : 1), y0 + r * 0.22, z + r * (0.3 + h(4) * 0.4) * (h(5) < 0.5 ? -1 : 1), r * 0.55, greys[Math.floor(h(6) * 4)], 0.1));
+  if (r >= 0.3) circ(x, z, r * 0.85);
+}
+function pebblesAt(P, x, z, n, spread, seed) {
+  const h = (k) => { let q = Math.imul((seed | 0) + k * 6151, 374761393); q = Math.imul(q ^ (q >>> 13), 1274126177); return ((q ^ (q >>> 16)) >>> 0) / 4294967296; };
+  const greys = [0x9A9690, 0x8A8F94, 0xA8A39A, 0x77797C, 0xB3AA98];
+  for (let i = 0; i < n; i++) {
+    const a = h(i * 3 + 1) * 6.2832, d = Math.sqrt(h(i * 3 + 2)) * spread, px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d, s = 0.04 + h(i * 3 + 3) * 0.07;
+    P.push(S(px, gh(px, pz) + s * 0.4, pz, s, greys[i % greys.length], 0.1));
+  }
+}
 function boulder(P, x, z, r) {
   const y0 = gh(x, z);
   P.push(S(x, y0 + r * 0.35, z, r, 0x8E959B, 0.08));
@@ -184,6 +199,8 @@ function buildObjects() {
         break;
       case 'windows': windowsRow(P, it.xa, it.xb, it.zf, it.ys, it.wh, it.ww, it.pitch, it.cols.map(col)); break;
       case 'tree': tree(P, it.x, it.z, it.h, it.r); break;
+      case 'rock': rockAt(P, it.x, it.z, it.r, it.seed || 0); break;
+      case 'pebbles': pebblesAt(P, it.x, it.z, it.n, it.r, it.seed || 0); break;
       case 'lamp': lamp(P, it.x, it.z, it.e, nv(it.y0)); break;
       case 'bldgN': bldgN(P, it); break;
       case 'bldgY': bldgY(P, it); break;
